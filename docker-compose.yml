@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  safasanha:
+    container_name: safasanha
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Caso prefira utilizar uma imagem pré-compilada, comente 'build:' e descomente 'image:'
+    # image: seurepositorio/safasanha:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DATA_DIR=/app/data
+    volumes:
+      # Mapeamento do diretório de dados persistentes para não perder o histórico de entregas
+      - safasanha_data:/app/data
+      # Ou se preferir mapear um diretório local do TrueNAS:
+      # - /mnt/seu-pool/apps/safasanha/data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health', (r) => { if (r.statusCode !== 200) process.exit(1); })"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  safasanha_data:
+    driver: local

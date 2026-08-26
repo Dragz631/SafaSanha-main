@@ -1,0 +1,6 @@
+{
+  "name": "LogiScan - Módulo do Entregador",
+  "description": "Aplicativo mobile-friendly de triagem de entregas com captura em fluxo guiado, leitura de código de barras e identificação de recebedor.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
