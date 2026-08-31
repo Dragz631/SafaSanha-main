@@ -5,13 +5,15 @@ import { GeneralSummaryTab } from './components/GeneralSummaryTab';
 import { AssociationTab } from './components/AssociationTab';
 import { DeliveryData } from './types';
 import { INITIAL_DELIVERIES } from './data/sampleData';
+import { CAJU_PRIMARY_AREAS, isManilhaDelivery } from './data/cajuStreets';
 
 // Função para normalizar e remover duplicatas na lista de ruas
 const normalizeStreetList = (list: string[]): string[] => {
   const map = new Map<string, string>();
   list.forEach((st) => {
     const clean = st?.trim();
-    if (clean && !map.has(clean.toLowerCase())) {
+    // Filtra travessas de letras da Manilha para não aparecerem como botões soltos no topo
+    if (clean && !/^rua\s+[a-k]$/i.test(clean) && !map.has(clean.toLowerCase())) {
       map.set(clean.toLowerCase(), clean);
     }
   });
@@ -19,21 +21,16 @@ const normalizeStreetList = (list: string[]): string[] => {
 };
 
 const LOCAL_STORAGE_KEY = 'logiscan_deliveries_prod_v1';
-const STREETS_STORAGE_KEY = 'logiscan_region_streets_v3';
+const STREETS_STORAGE_KEY = 'logiscan_today_streets_v5';
 
-const DEFAULT_STREETS = [
-  'Rua Carlos Seidl',
-  'Rua Conde de Leopoldina',
-  'Rua Bela',
-  'Travessa do Triunfo',
-];
+const DEFAULT_STREETS = CAJU_PRIMARY_AREAS;
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'ruas' | 'resumo' | 'associacao'>('ruas');
   const [activeStreet, setActiveStreet] = useState<string>('Rua Carlos Seidl');
   const [isRegionModalOpen, setIsRegionModalOpen] = useState<boolean>(false);
 
-  // Lista de ruas da região persistidas no LocalStorage sem duplicatas
+  // Lista de ruas selecionadas para a rota de hoje
   const [savedStreets, setSavedStreets] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(STREETS_STORAGE_KEY);
@@ -54,7 +51,24 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed;
+          // Sanitização de segurança: se a rua for Carlos Seidl ou outra rua normal, remove sub_rua_manilha residual
+          return parsed.map((d: DeliveryData) => {
+            const rua = (d.endereco_rua || '').toLowerCase().trim();
+            if (
+              rua.includes('carlos seidl') ||
+              rua.includes('general sampaio') ||
+              rua.includes('general gurjão') ||
+              rua.includes('praia do caju') ||
+              rua.includes('monsenhor') ||
+              rua.includes('tavares')
+            ) {
+              return {
+                ...d,
+                sub_rua_manilha: undefined,
+              };
+            }
+            return d;
+          });
         }
       }
     } catch (_e) {}
@@ -81,12 +95,15 @@ export default function App() {
       const map = new Map<string, string>();
       prev.forEach((st) => {
         const clean = st?.trim();
-        if (clean) map.set(clean.toLowerCase(), clean);
+        if (clean && !/^rua\s+[a-k]$/i.test(clean)) {
+          map.set(clean.toLowerCase(), clean);
+        }
       });
       let changed = false;
       deliveries.forEach((d) => {
         const st = d.endereco_rua || d.endereco_completo?.split(',')[0]?.trim();
-        if (st && !map.has(st.trim().toLowerCase())) {
+        // Não adiciona sub-ruas ou letras da Manilha como abas soltas no topo
+        if (st && !isManilhaDelivery(d) && !/^rua\s+[a-k]$/i.test(st) && !map.has(st.trim().toLowerCase())) {
           map.set(st.trim().toLowerCase(), st.trim());
           changed = true;
         }
@@ -94,18 +111,6 @@ export default function App() {
       return changed ? Array.from(map.values()) : prev;
     });
   }, [deliveries]);
-
-  // Sincroniza com o backend se disponível
-  useEffect(() => {
-    fetch('/api/deliveries')
-      .then((res) => res.json())
-      .then((data: DeliveryData[]) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setDeliveries(data);
-        }
-      })
-      .catch((_err) => {});
-  }, []);
 
   // Handlers de Ruas
   const handleAddStreet = (newStreet: string) => {
@@ -157,66 +162,32 @@ export default function App() {
     );
   };
 
-  // Handlers de Entregas
+  // Handlers de Entregas (100% em memória local com LocalStorage instantâneo)
   const handleAddDelivery = (newDelivery: DeliveryData) => {
     setDeliveries((prev) => [newDelivery, ...prev]);
-    // Garante que a rua do pacote está nas ruas da região
-    if (newDelivery.endereco_rua) {
-      handleAddStreet(newDelivery.endereco_rua);
-    }
-    fetch('/api/deliveries', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newDelivery),
-    }).catch(() => {});
   };
 
   const handleAddBatchDeliveries = (newDeliveries: DeliveryData[]) => {
     if (newDeliveries.length === 0) return;
     setDeliveries((prev) => [...newDeliveries, ...prev]);
-
-    // Agrega novas ruas unicamente em lote sem chamadas repetidas
-    const newStreets: string[] = [];
-    newDeliveries.forEach((d) => {
-      const st = d.endereco_rua || d.endereco_completo?.split(',')[0]?.trim();
-      if (st && !newStreets.some((s) => s.toLowerCase() === st.toLowerCase())) {
-        newStreets.push(st);
-      }
-    });
-
-    if (newStreets.length > 0) {
-      setSavedStreets((prev) => normalizeStreetList([...prev, ...newStreets]));
-    }
-
-    newDeliveries.forEach((d) => {
-      fetch('/api/deliveries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(d),
-      }).catch(() => {});
-    });
   };
 
   const handleUpdateDelivery = (updated: DeliveryData) => {
     setDeliveries((prev) =>
       prev.map((d) => (d.id_entrega === updated.id_entrega ? updated : d))
     );
-    fetch('/api/deliveries', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updated),
-    }).catch(() => {});
   };
 
   const handleDeleteDelivery = (id: string) => {
     setDeliveries((prev) => prev.filter((d) => d.id_entrega !== id));
-    fetch(`/api/deliveries/${id}`, { method: 'DELETE' }).catch(() => {});
   };
 
   const handleClearAllDeliveries = () => {
     if (window.confirm('Deseja realmente limpar todos os pacotes e começar um novo dia de entregas?')) {
       setDeliveries([]);
-      localStorage.removeItem(LOCAL_STORAGE_KEY);
+      try {
+        localStorage.removeItem(LOCAL_STORAGE_KEY);
+      } catch (_e) {}
     }
   };
 
@@ -284,6 +255,8 @@ export default function App() {
               setActiveTab('ruas');
             }}
             onClearAllDeliveries={handleClearAllDeliveries}
+            onUpdateDelivery={handleUpdateDelivery}
+            onSetDeliveries={setDeliveries}
           />
         )}
 

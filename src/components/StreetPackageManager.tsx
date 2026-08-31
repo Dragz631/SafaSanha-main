@@ -21,17 +21,27 @@ import {
   ArrowDown,
   Zap,
   Mic,
-  ListPlus
+  ListPlus,
+  Navigation,
+  Compass
 } from 'lucide-react';
 import { DeliveryData } from '../types';
 import { PackageCard } from './PackageCard';
 import { HouseGroupCard } from './HouseGroupCard';
+import { ManilhaSubStreetCard } from './ManilhaSubStreetCard';
 import { GroupedDeliveryWhatsAppModal } from './GroupedDeliveryWhatsAppModal';
 import { QuickPackageScannerModal } from './QuickPackageScannerModal';
 import { ManualPackageModal } from './ManualPackageModal';
 import { DeliveryWhatsAppModal } from './DeliveryWhatsAppModal';
 import { RegionStreetsModal } from './RegionStreetsModal';
 import { QuickBatchAddModal } from './QuickBatchAddModal';
+import { MoneyRewardOverlay } from './MoneyRewardOverlay';
+import {
+  getStreetInfo,
+  MANILHA_SUB_STREETS,
+  isManilhaDelivery,
+  getManilhaSubStreet
+} from '../data/cajuStreets';
 
 interface StreetPackageManagerProps {
   deliveries: DeliveryData[];
@@ -75,6 +85,15 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   const [isBatchModalOpen, setIsBatchModalOpen] = useState<boolean>(false);
   const [editingDelivery, setEditingDelivery] = useState<DeliveryData | null>(null);
   
+  // Identifica se a área ativa é o Setor Unificado da Manilha
+  const isManilhaActive = useMemo(() => {
+    const clean = activeStreet.toLowerCase().trim();
+    return clean === 'manilha' || clean.includes('manilha') || clean.includes('penha');
+  }, [activeStreet]);
+
+  // Sub-rua selecionada para cadastro rápido na Manilha
+  const [manilhaSubStreet, setManilhaSubStreet] = useState<string>('Rua Leão XIII');
+
   // Estado da Barra de Entrada Relâmpago (Direto na tela principal)
   const [quickHouseNumber, setQuickHouseNumber] = useState<string>('');
   const [quickComplement, setQuickComplement] = useState<string>('');
@@ -162,14 +181,18 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     }
   };
 
-  // Pacotes pertencentes à rua ativa
+  // Pacotes pertencentes à rua/área ativa
   const streetDeliveries = useMemo(() => {
+    if (isManilhaActive) {
+      return deliveries.filter((d) => isManilhaDelivery(d));
+    }
     const cleanActive = activeStreet.trim().toLowerCase();
     return deliveries.filter((d) => {
+      if (isManilhaDelivery(d)) return false;
       const st = (d.endereco_rua || d.endereco_completo || '').toLowerCase();
       return st.includes(cleanActive) || cleanActive.includes(st);
     });
-  }, [deliveries, activeStreet]);
+  }, [deliveries, activeStreet, isManilhaActive]);
 
   // Contadores da rua ativa
   const totalCount = streetDeliveries.length;
@@ -194,17 +217,24 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     const comp = quickComplement.trim();
     const code = `#${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const targetStreet = isManilhaActive ? 'Manilha' : activeStreet;
+    const targetSub = isManilhaActive ? manilhaSubStreet : undefined;
+    const fullAddress = isManilhaActive
+      ? `${manilhaSubStreet}, ${cleanNum}${comp ? ` (${comp})` : ''} (Manilha • Caju)`
+      : `${activeStreet}, ${cleanNum}${comp ? ` (${comp})` : ''}`;
+
     const newDelivery: DeliveryData = {
       id_entrega: `del_${Date.now()}`,
       codigo_pacote: code,
       nome_destinatario: client,
       recebedor_detalhes: client,
       recebedor_tipo: 'proprio_morador',
-      endereco_rua: activeStreet,
+      endereco_rua: targetStreet,
+      sub_rua_manilha: targetSub,
       numero_casa: cleanNum,
       endereco_numero: cleanNum,
       complemento: comp || undefined,
-      endereco_completo: `${activeStreet}, ${cleanNum}${comp ? ` (${comp})` : ''}`,
+      endereco_completo: fullAddress,
       foto_pacote_path: '',
       foto_local_path: '',
       data_hora: new Date().toISOString(),
@@ -218,7 +248,11 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
       if ('vibrate' in navigator) navigator.vibrate(40);
     } catch (_e) {}
 
-    setQuickToast(`✅ Nº ${cleanNum} ${comp ? `(${comp})` : ''} adicionado!`);
+    const toastMsg = isManilhaActive
+      ? `✅ ${manilhaSubStreet} Nº ${cleanNum} adicionado na Manilha!`
+      : `✅ Nº ${cleanNum} ${comp ? `(${comp})` : ''} adicionado!`;
+
+    setQuickToast(toastMsg);
     setQuickHouseNumber('');
     setQuickComplement('');
     setQuickClientName('');
@@ -246,7 +280,14 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         const code = d.codigo_pacote.toLowerCase();
         const num = (d.numero_casa || d.endereco_numero || '').toLowerCase();
         const complement = (d.complemento || d.endereco_complemento || '').toLowerCase();
-        return client.includes(q) || code.includes(q) || num.includes(q) || complement.includes(q);
+        const sub = (d.sub_rua_manilha || '').toLowerCase();
+        return (
+          client.includes(q) ||
+          code.includes(q) ||
+          num.includes(q) ||
+          complement.includes(q) ||
+          sub.includes(q)
+        );
       }
 
       return true;
@@ -277,7 +318,23 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     });
   }, [filteredDeliveries, sortBy]);
 
-  // Agrupamento por número de casa (para Portarias / Prédios / Múltiplos pacotes no mesmo endereço)
+  // Agrupamento por sub-rua da Manilha (quando na Manilha)
+  const manilhaSubGroups = useMemo(() => {
+    if (!isManilhaActive) return [];
+
+    return MANILHA_SUB_STREETS.map((subDef) => {
+      const items = sortedDeliveries.filter(
+        (d) => getManilhaSubStreet(d).toLowerCase() === subDef.name.toLowerCase()
+      );
+      return {
+        subDef,
+        items,
+        count: items.length,
+      };
+    }).filter((g) => g.count > 0);
+  }, [isManilhaActive, sortedDeliveries]);
+
+  // Agrupamento por número de casa (para ruas normais ou dentro de cada grupo)
   const groupedHouses = useMemo(() => {
     const map = new Map<string, DeliveryData[]>();
 
@@ -311,6 +368,23 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     }
   };
 
+  // Estado do Efeito Visual de Dinheiro na Entrega
+  const [rewardState, setRewardState] = useState<{
+    isVisible: boolean;
+    packageCount?: number;
+    clientName?: string;
+  }>({ isVisible: false });
+
+  const triggerReward = (count: number = 1, clientName?: string) => {
+    setRewardState({
+      isVisible: true,
+      packageCount: count,
+      clientName,
+    });
+  };
+
+  const activeStreetInfo = useMemo(() => getStreetInfo(activeStreet), [activeStreet]);
+
   const handleOpenDeliveryModal = (del: DeliveryData, mode: 'entrega' | 'insucesso' = 'entrega') => {
     setSelectedForDelivery(del);
     setDeliveryModalMode(mode);
@@ -321,32 +395,60 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   };
 
   const handleConfirmGroupDelivery = (updatedList: DeliveryData[]) => {
+    const deliveredCount = updatedList.filter(
+      (d) => d.status === 'entregue' || d.status === 'concluido'
+    ).length;
     updatedList.forEach((d) => {
       onUpdateDelivery(d);
     });
     setSelectedGroupForDelivery(null);
+    if (deliveredCount > 0) {
+      triggerReward(deliveredCount, updatedList[0]?.nome_destinatario);
+    }
   };
 
   return (
-    <div className="max-w-xl mx-auto px-3.5 pt-3 pb-28 space-y-3">
-      
-      {/* 1. SELETOR DE RUA & MÉTRICAS DA RUA */}
-      <div className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-xs space-y-3">
+    <div className="space-y-3 pb-24">
+      {/* OVERLAY DE RECOMPENSA EM DINHEIRO (ANIMAÇÃO AO CONCLUIR ENTREGA) */}
+      <MoneyRewardOverlay
+        isVisible={rewardState.isVisible}
+        packageCount={rewardState.packageCount}
+        clientName={rewardState.clientName}
+        onClose={() => setRewardState({ isVisible: false })}
+      />
+
+      {/* 1. PAINEL DE CONTROLE DA RUA ATIVA COM BARRA DE PROGRESSO & RUAS DO DIA */}
+      <div className="bg-white rounded-3xl p-3.5 border border-slate-200/90 shadow-sm space-y-2.5">
         
-        {/* Cabeçalho da Rua Ativa com Botão de Troca e Gestão */}
+        {/* Rua Atual & Botão Trocar Rua */}
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
-            <h2 className="text-base font-black text-slate-900 truncate">
-              {activeStreet}
-            </h2>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className={`w-9 h-9 rounded-2xl flex items-center justify-center font-black shrink-0 shadow-xs ${
+              isManilhaActive ? 'bg-amber-400 text-slate-950' : 'bg-emerald-500 text-slate-950'
+            }`}>
+              {isManilhaActive ? <Navigation className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  {isManilhaActive ? 'Setor Unificado' : 'Rua em Atendimento'}
+                </span>
+                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded-md border ${activeStreetInfo.badgeColor}`}>
+                  {activeStreetInfo.sector}
+                </span>
+              </div>
+              <h1 className="text-base sm:text-lg font-black text-slate-900 leading-tight truncate">
+                {activeStreet}
+              </h1>
+            </div>
           </div>
+
           <button
             onClick={openRegionModal}
-            className="text-[11px] font-extrabold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl border border-emerald-300/80 shrink-0 cursor-pointer flex items-center gap-1 transition-all active:scale-95"
+            className="text-[11px] font-extrabold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl border border-emerald-300/80 shrink-0 cursor-pointer flex items-center gap-1 transition-all active:scale-95 shadow-xs"
           >
             <Layers className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Trocar Rua</span>
+            <span>Definir Ruas de Hoje</span>
           </button>
         </div>
 
@@ -377,24 +479,28 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           )}
         </div>
 
-        {/* Atalhos de Ruas da Região em carrossel horizontal */}
+        {/* Atalhos de Ruas Selecionadas para Hoje no Caju em carrossel horizontal */}
         <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
           <span className="text-[10px] font-black text-slate-400 shrink-0 uppercase tracking-wider">
-            Região:
+            Ruas de Hoje:
           </span>
           {savedStreets.map((st) => {
             const isCurrent = activeStreet.toLowerCase() === st.toLowerCase();
+            const isMan = st.toLowerCase() === 'manilha' || st.toLowerCase().includes('manilha');
             return (
               <button
                 key={st}
                 onClick={() => onSelectStreet(st)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
                   isCurrent
                     ? 'bg-slate-900 text-white shadow-xs'
+                    : isMan
+                    ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 border border-amber-300'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/60'
                 }`}
               >
-                {st}
+                {isMan ? '🏗️ ' : '📍 '}
+                <span>{st}</span>
               </button>
             );
           })}
@@ -403,7 +509,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
             className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300/80 transition-all cursor-pointer shrink-0 flex items-center gap-1"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Nova Rua</span>
+            <span>+ Ruas de Hoje</span>
           </button>
 
           {deliveries.length > 0 && onClearAllDeliveries && (
@@ -419,13 +525,19 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         </div>
       </div>
 
-      {/* 2. BARRA DE ENTRADA RELÂMPAGO (CADASTRO EM 1 SEGUNDO DIRETO NA TELA) */}
-      <div className="bg-gradient-to-r from-emerald-600 to-teal-700 rounded-2xl p-3 text-white shadow-md space-y-2">
+      {/* 2. BARRA DE ENTRADA RELÂMPAGO (ESPECIALIZADA PARA MANILHA OU RUA NORMAL) */}
+      <div className={`rounded-2xl p-3 text-white shadow-md space-y-2.5 ${
+        isManilhaActive
+          ? 'bg-gradient-to-r from-amber-600 via-amber-700 to-amber-800 border border-amber-500/40'
+          : 'bg-gradient-to-r from-emerald-600 to-teal-700'
+      }`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <Zap className="w-4 h-4 text-amber-300 fill-amber-300" />
             <span className="text-xs font-black tracking-wide">
-              Cadastro Rápido (1 Toque)
+              {isManilhaActive
+                ? '🏗️ Cadastro na Manilha (Escolha a Rua/Letra + Nº)'
+                : `📍 Cadastro na ${activeStreet}`}
             </span>
           </div>
 
@@ -442,7 +554,62 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           </div>
         </div>
 
-        {/* Formulário Inline Super Rápido com Complemento e Chips */}
+        {/* SELETOR DE SUB-RUA EXCLUSIVO DA MANILHA (VIAS PRINCIPAIS + LETRAS A A K) */}
+        {isManilhaActive && (
+          <div className="space-y-1.5 bg-black/25 p-2 rounded-xl border border-white/10">
+            <span className="text-[10px] font-black uppercase text-amber-200 block">
+              Selecione a Rua da Manilha:
+            </span>
+
+            {/* Vias Centrais */}
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+              {MANILHA_SUB_STREETS.filter((s) => s.type === 'principal').map((st) => (
+                <button
+                  key={st.id}
+                  type="button"
+                  onClick={() => {
+                    setManilhaSubStreet(st.name);
+                    quickInputRef.current?.focus();
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer shrink-0 ${
+                    manilhaSubStreet === st.name
+                      ? 'bg-amber-300 text-slate-950 shadow-xs'
+                      : 'bg-white/20 hover:bg-white/30 text-white'
+                  }`}
+                >
+                  {st.name} ({st.shortLabel})
+                </button>
+              ))}
+            </div>
+
+            {/* Travessas de Letras (Ordem Alfabética: A a K) */}
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5">
+              <span className="text-[10px] font-black text-amber-200/90 shrink-0">
+                Letras:
+              </span>
+              {MANILHA_SUB_STREETS.filter((s) => s.type === 'letra').map((st) => (
+                <button
+                  key={st.id}
+                  type="button"
+                  onClick={() => {
+                    setManilhaSubStreet(st.name);
+                    quickInputRef.current?.focus();
+                  }}
+                  className={`w-7 h-7 rounded-lg text-xs font-black transition-all cursor-pointer shrink-0 flex items-center justify-center ${
+                    manilhaSubStreet === st.name
+                      ? 'bg-amber-300 text-slate-950 shadow-xs scale-105'
+                      : 'bg-white/20 hover:bg-white/30 text-white'
+                  }`}
+                  title={st.name}
+                >
+                  {st.name.replace(/rua\s*/i, '').toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Formulário Inline Super Rápido com Número da Casa e Complemento */}
         <form onSubmit={handleQuickAdd} className="space-y-1.5">
           <div className="flex items-center gap-1.5">
             {/* Campo de Número da Casa - Foco Rápido */}
@@ -488,7 +655,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
               className={`p-2 rounded-xl text-white cursor-pointer transition-all shrink-0 ${
                 isQuickListening ? 'bg-rose-500 animate-pulse' : 'bg-white/20 hover:bg-white/30'
               }`}
-              title="Falar número e complemento por voz (Ex: '563 Diego Apto 302')"
+              title="Falar número e complemento por voz"
             >
               <Mic className="w-4 h-4" />
             </button>
@@ -506,7 +673,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
 
           {/* Quick Chips de Complementos Rápidos em 1 toque */}
           <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5 pb-0.5">
-            <span className="text-[10px] font-extrabold text-emerald-200 shrink-0">
+            <span className="text-[10px] font-extrabold text-white/80 shrink-0">
               +Compl:
             </span>
             {['Apto ', 'Bloco A', 'Bloco B', 'Casa 2', 'Fundos', 'Sobrado', 'Loja '].map((chip) => (
@@ -556,7 +723,11 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar por Nº casa, morador ou pacote..."
+            placeholder={
+              isManilhaActive
+                ? 'Buscar por Rua (Ex: Rua B, Leão XIII), número ou morador...'
+                : 'Buscar por Nº casa, morador ou pacote...'
+            }
             className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500 font-bold"
           />
         </div>
@@ -564,33 +735,33 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         {/* Tabs de Filtro e Seletor de Ordenação */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-1.5 pt-0.5">
           {/* Status Tabs */}
-          <div className="flex bg-slate-100 p-0.5 rounded-xl text-[11px] font-extrabold overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar text-xs font-black">
             <button
               onClick={() => setFilterStatus('todos')}
-              className={`flex-1 py-1 px-2 rounded-lg transition-all cursor-pointer text-center whitespace-nowrap ${
+              className={`px-2.5 py-1 rounded-xl cursor-pointer shrink-0 transition-all ${
                 filterStatus === 'todos'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
               Todos ({totalCount})
             </button>
             <button
               onClick={() => setFilterStatus('pendente')}
-              className={`flex-1 py-1 px-2 rounded-lg transition-all cursor-pointer text-center whitespace-nowrap ${
+              className={`px-2.5 py-1 rounded-xl cursor-pointer shrink-0 transition-all ${
                 filterStatus === 'pendente'
-                  ? 'bg-white text-amber-800 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
+                  ? 'bg-amber-400 text-slate-950 shadow-xs font-black'
+                  : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200/60'
               }`}
             >
               Pendentes ({pendingCount})
             </button>
             <button
               onClick={() => setFilterStatus('entregue')}
-              className={`flex-1 py-1 px-2 rounded-lg transition-all cursor-pointer text-center whitespace-nowrap ${
+              className={`px-2.5 py-1 rounded-xl cursor-pointer shrink-0 transition-all ${
                 filterStatus === 'entregue'
-                  ? 'bg-white text-emerald-800 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200/60'
               }`}
             >
               Entregues ({deliveredCount})
@@ -598,50 +769,55 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
             {insucessoCount > 0 && (
               <button
                 onClick={() => setFilterStatus('insucesso')}
-                className={`flex-1 py-1 px-2 rounded-lg transition-all cursor-pointer text-center whitespace-nowrap ${
+                className={`px-2.5 py-1 rounded-xl cursor-pointer shrink-0 transition-all ${
                   filterStatus === 'insucesso'
-                    ? 'bg-white text-rose-800 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200/60'
                 }`}
               >
-                Insucessos ({insucessoCount})
+                Falhas ({insucessoCount})
               </button>
             )}
           </div>
 
-          {/* Ordenação Flexível & Botão de Inverter Direção */}
-          <div className="flex items-center gap-1.5">
-            <div className="relative flex-1 sm:flex-initial">
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="w-full bg-slate-100 hover:bg-slate-200 border border-slate-200 text-[11px] font-bold text-slate-700 py-1.5 px-2.5 rounded-xl appearance-none pr-6 cursor-pointer focus:outline-none"
-              >
-                <option value="numero_asc">🔼 Nº Casa: 1 → 100 (Subindo)</option>
-                <option value="numero_desc">🔽 Nº Casa: 100 → 1 (Descendo)</option>
-                <option value="pendentes_primeiro">⏳ Pendentes Primeiro</option>
-                <option value="hora_desc">🕒 Mais Recentes</option>
-                <option value="codigo">📦 Código do Pacote</option>
-              </select>
-              <ChevronDown className="w-3 h-3 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
+          {/* Seletor de Ordenação */}
+          <div className="flex items-center gap-1 self-end sm:self-auto">
             <button
               onClick={toggleSortDirection}
-              className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 cursor-pointer shrink-0"
-              title="Inverter direção da rua (Subindo / Descendo)"
+              className="p-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-700 cursor-pointer text-xs font-bold flex items-center gap-1 border border-slate-200"
+              title="Inverter ordem dos números"
             >
-              {sortBy === 'numero_desc' ? (
-                <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
+              {sortBy === 'numero_asc' ? (
+                <>
+                  <ArrowUp className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-[10px]">1 → 100</span>
+                </>
+              ) : sortBy === 'numero_desc' ? (
+                <>
+                  <ArrowDown className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-[10px]">100 → 1</span>
+                </>
               ) : (
-                <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
+                <ArrowUpDown className="w-3.5 h-3.5" />
               )}
             </button>
+
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="px-2 py-1.5 bg-slate-100 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 focus:outline-none cursor-pointer"
+            >
+              <option value="numero_asc">Nº Casa (Menor → Maior)</option>
+              <option value="numero_desc">Nº Casa (Maior → Menor)</option>
+              <option value="pendentes_primeiro">Pendentes Primeiro</option>
+              <option value="hora_desc">Mais Recentes</option>
+              <option value="codigo">Código Pacote</option>
+            </select>
           </div>
         </div>
       </div>
 
-      {/* 4. SELETOR DE MODO DE VISUALIZAÇÃO (AGRUPADO P/ PORTARIA vs INDIVIDUAL) */}
+      {/* 4. MODOS DE VISUALIZAÇÃO */}
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-1.5">
           <button
@@ -652,12 +828,11 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                 : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
             }`}
           >
-            <span>🏢 Agrupado p/ Casas / Portaria ({groupedHouses.length})</span>
-            {multipleHousesCount > 0 && (
-              <span className="bg-amber-400 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded-md">
-                {multipleHousesCount} com +1 pacote
-              </span>
-            )}
+            <span>
+              {isManilhaActive
+                ? `🏗️ Por Ruas da Manilha (${manilhaSubGroups.length})`
+                : `🏢 Agrupado p/ Casas (${groupedHouses.length})`}
+            </span>
           </button>
 
           <button
@@ -668,117 +843,116 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                 : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
             }`}
           >
-            <span>📦 Todos os Pacotes ({sortedDeliveries.length})</span>
+            <span>📦 Lista Individual ({sortedDeliveries.length})</span>
           </button>
         </div>
       </div>
 
-      {/* 5. LISTA DE PACOTES / CASAS INTERATIVOS */}
-      <div className="space-y-2.5">
-        {sortedDeliveries.length > 0 ? (
-          viewMode === 'grouped' ? (
-            groupedHouses.map((group) => (
-              <HouseGroupCard
-                key={group.houseNumber}
-                houseNumber={group.houseNumber}
+      {/* 5. LISTA DE PACOTES / ESTRUTURAÇÃO DA MANILHA OU RUA NORMAL */}
+      <div className="space-y-3">
+        {isManilhaActive ? (
+          /* VISUALIZAÇÃO UNIFICADA DA MANILHA (CARDS AGRUPADOS POR SUB-RUA / LETRAS A A K EM ORDEM ALFABÉTICA) */
+          manilhaSubGroups.length > 0 ? (
+            manilhaSubGroups.map((group) => (
+              <ManilhaSubStreetCard
+                key={group.subDef.id}
+                subStreetDef={group.subDef}
                 deliveries={group.items}
+                viewMode={viewMode}
                 onOpenSingleDeliveryModal={(del, mode) => handleOpenDeliveryModal(del, mode || 'entrega')}
                 onOpenGroupDeliveryModal={(items) => handleOpenGroupDeliveryModal(items)}
                 onEditDelivery={(del) => setEditingDelivery(del)}
                 onDeleteDelivery={(id) => onDeleteDelivery(id)}
-                onUpdateDelivery={(del) => onUpdateDelivery(del)}
+                onUpdateDelivery={(del) => {
+                  onUpdateDelivery(del);
+                  if (del.status === 'entregue' || del.status === 'concluido') {
+                    triggerReward(1, del.nome_destinatario);
+                  }
+                }}
               />
             ))
           ) : (
-            sortedDeliveries.map((delivery, index) => (
-              <PackageCard
-                key={delivery.id_entrega}
-                index={index}
-                delivery={delivery}
-                onDeliverClick={(del) => handleOpenDeliveryModal(del, 'entrega')}
-                onOpenDeliveryModal={(del, mode) => handleOpenDeliveryModal(del, mode || 'entrega')}
-                onEditClick={(del) => setEditingDelivery(del)}
-                onEdit={(del) => setEditingDelivery(del)}
-                onDeleteClick={(id) => onDeleteDelivery(id)}
-                onDelete={(id) => onDeleteDelivery(id)}
-                onQuickStatusChange={(del, status) =>
-                  onUpdateDelivery({ ...del, status })
-                }
-                onToggleStatus={(del) =>
-                  onUpdateDelivery({
-                    ...del,
-                    status: del.status === 'entregue' ? 'aguardando_rua' : 'entregue',
-                  })
-                }
-              />
-            ))
-          )
-        ) : (
-          <div className="bg-white rounded-2xl p-8 border border-slate-200 text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-              <Package className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="font-black text-sm text-slate-800">
-                Nenhum pacote cadastrado na rua
+            <div className="bg-white rounded-3xl p-8 border-2 border-dashed border-amber-300 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+                <Navigation className="w-6 h-6" />
+              </div>
+              <h3 className="font-black text-slate-900 text-sm">
+                Nenhum pacote cadastrado na Manilha ainda
               </h3>
-              <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
-                Digite o número da casa acima na barra verde, use o cadastro em lote ou bipe com a câmera na <span className="font-bold text-slate-700">{activeStreet}</span>.
+              <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                Escolha a rua acima (Leão XIII, Canal, Penha ou Letras A a K), digite o número da casa e adicione!
               </p>
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-              <button
-                onClick={() => setIsBatchModalOpen(true)}
-                className="px-3.5 py-2 bg-amber-50 text-amber-800 font-black text-xs rounded-xl border border-amber-300 cursor-pointer"
-              >
-                📋 Inserir Vários em Lote
-              </button>
-              <button
-                onClick={() => setIsManualModalOpen(true)}
-                className="px-3.5 py-2 bg-slate-100 text-slate-800 font-black text-xs rounded-xl border border-slate-300 cursor-pointer"
-              >
-                + Formulário Completo
-              </button>
-              <button
-                onClick={() => setIsScannerOpen(true)}
-                className="px-3.5 py-2 bg-emerald-600 text-white font-black text-xs rounded-xl cursor-pointer"
-              >
-                📸 Bipar com Câmera
-              </button>
+          )
+        ) : (
+          /* VISUALIZAÇÃO DE RUA NORMAL DO CAJU */
+          sortedDeliveries.length > 0 ? (
+            viewMode === 'grouped' ? (
+              groupedHouses.map((group) => (
+                <HouseGroupCard
+                  key={group.houseNumber}
+                  houseNumber={group.houseNumber}
+                  deliveries={group.items}
+                  onOpenSingleDeliveryModal={(del, mode) => handleOpenDeliveryModal(del, mode || 'entrega')}
+                  onOpenGroupDeliveryModal={(items) => handleOpenGroupDeliveryModal(items)}
+                  onEditDelivery={(del) => setEditingDelivery(del)}
+                  onDeleteDelivery={(id) => onDeleteDelivery(id)}
+                  onUpdateDelivery={(del) => {
+                    onUpdateDelivery(del);
+                    if (del.status === 'entregue' || del.status === 'concluido') {
+                      triggerReward(1, del.nome_destinatario);
+                    }
+                  }}
+                />
+              ))
+            ) : (
+              sortedDeliveries.map((delivery, index) => (
+                <PackageCard
+                  key={delivery.id_entrega}
+                  index={index}
+                  delivery={delivery}
+                  onDeliverClick={(del) => handleOpenDeliveryModal(del, 'entrega')}
+                  onOpenDeliveryModal={(del, mode) => handleOpenDeliveryModal(del, mode || 'entrega')}
+                  onEditClick={(del) => setEditingDelivery(del)}
+                  onEdit={(del) => setEditingDelivery(del)}
+                  onDeleteClick={(id) => onDeleteDelivery(id)}
+                  onDelete={(id) => onDeleteDelivery(id)}
+                  onQuickStatusChange={(del, status) => {
+                    onUpdateDelivery({ ...del, status });
+                    if (status === 'entregue' || status === 'concluido') {
+                      triggerReward(1, del.nome_destinatario);
+                    }
+                  }}
+                  onToggleStatus={(del) => {
+                    const targetStatus = del.status === 'entregue' ? 'aguardando_rua' : 'entregue';
+                    onUpdateDelivery({
+                      ...del,
+                      status: targetStatus,
+                    });
+                    if (targetStatus === 'entregue') {
+                      triggerReward(1, del.nome_destinatario);
+                    }
+                  }}
+                />
+              ))
+            )
+          ) : (
+            <div className="bg-white rounded-3xl p-8 border-2 border-dashed border-slate-200 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                <Package className="w-6 h-6" />
+              </div>
+              <h3 className="font-black text-slate-900 text-sm">
+                Nenhum pacote cadastrado para {activeStreet}
+              </h3>
+              <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                Use a barra de entrada rápida acima para adicionar o primeiro pacote pelo número da casa.
+              </p>
             </div>
-          </div>
+          )
         )}
       </div>
 
-      {/* 5. BARRA DE AÇÕES INFERIOR FIXA (ZONA DO POLEGAR NO CELULAR) */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-lg px-4 py-2.5 pb-safe max-w-xl mx-auto flex items-center gap-2">
-        <button
-          onClick={() => setIsBatchModalOpen(true)}
-          className="px-3.5 py-3 bg-amber-500 hover:bg-amber-400 active:scale-[0.98] text-slate-950 font-black text-xs rounded-2xl shadow-sm flex items-center justify-center gap-1.5 cursor-pointer transition-all shrink-0"
-          title="Inserir vários números em lote"
-        >
-          <ListPlus className="w-4 h-4" />
-          <span>📋 LOTE</span>
-        </button>
-
-        <button
-          onClick={() => setIsManualModalOpen(true)}
-          className="flex-1 py-3 bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white font-black text-xs rounded-2xl shadow-sm flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-        >
-          <Plus className="w-4 h-4 text-emerald-400" />
-          <span>➕ MANUAL</span>
-        </button>
-
-        <button
-          onClick={() => setIsScannerOpen(true)}
-          className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white font-black text-xs rounded-2xl shadow-md shadow-emerald-600/30 flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-        >
-          <Camera className="w-4 h-4" />
-          <span>📸 BIPAR</span>
-        </button>
-      </div>
-
-      {/* MODAL DE GESTÃO DE RUAS DA REGIÃO */}
+      {/* MODAL REGIONAL DE SELEÇÃO DE RUAS DO CAJU PARA HOJE */}
       <RegionStreetsModal
         isOpen={regionModalOpen}
         activeStreet={activeStreet}
@@ -791,73 +965,58 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         onRenameStreet={onRenameStreet}
       />
 
-      {/* MODAL DE CADASTRO EM LOTE (VÁRIOS DE UMA VEZ) */}
+      {/* MODAL DE CADASTRO MANUAL COMPLETO */}
+      <ManualPackageModal
+        isOpen={isManualModalOpen}
+        onClose={() => setIsManualModalOpen(false)}
+        onSave={(data) => {
+          onAddDelivery(data);
+          setIsManualModalOpen(false);
+        }}
+        activeStreet={activeStreet}
+      />
+
+      {/* MODAL DE CADASTRO EM LOTE */}
       <QuickBatchAddModal
         isOpen={isBatchModalOpen}
-        activeStreet={activeStreet}
         onClose={() => setIsBatchModalOpen(false)}
-        onAddBatch={(newBatch) => {
+        activeStreet={activeStreet}
+        onSaveBatch={(batch) => {
           if (onAddBatchDeliveries) {
-            onAddBatchDeliveries(newBatch);
+            onAddBatchDeliveries(batch);
           } else {
-            newBatch.forEach(d => onAddDelivery(d));
+            batch.forEach((d) => onAddDelivery(d));
           }
+          setIsBatchModalOpen(false);
         }}
       />
 
-      {/* MODAL SCANNER DE CÂMERA RÁPIDO */}
-      <QuickPackageScannerModal
-        isOpen={isScannerOpen}
-        activeStreet={activeStreet}
-        onClose={() => setIsScannerOpen(false)}
-        onPackageScanned={(newDel) => {
-          onAddDelivery(newDel);
-          setIsScannerOpen(false);
-        }}
-      />
-
-      {/* MODAL MANUAL DE ADIÇÃO / EDIÇÃO */}
-      <ManualPackageModal
-        isOpen={isManualModalOpen || !!editingDelivery}
-        activeStreet={activeStreet}
-        initialDelivery={editingDelivery}
-        onClose={() => {
-          setIsManualModalOpen(false);
-          setEditingDelivery(null);
-        }}
-        onSave={(savedDelivery) => {
-          if (editingDelivery) {
-            onUpdateDelivery(savedDelivery);
-          } else {
-            onAddDelivery(savedDelivery);
-          }
-          setIsManualModalOpen(false);
-          setEditingDelivery(null);
-        }}
-      />
-
-      {/* MODAL WHATSAPP COM SELETOR DE RECEBEDOR, INSUCESSO E TEXTO PRONTO */}
+      {/* MODAL WHATSAPP PARA ENTREGA INDIVIDUAL */}
       {selectedForDelivery && (
         <DeliveryWhatsAppModal
+          isOpen={true}
           delivery={selectedForDelivery}
-          initialMode={deliveryModalMode}
+          mode={deliveryModalMode}
           onClose={() => setSelectedForDelivery(null)}
-          onConfirmDelivery={(updated) => {
+          onSaveDelivery={(updated) => {
             onUpdateDelivery(updated);
             setSelectedForDelivery(null);
+            if (updated.status === 'entregue' || updated.status === 'concluido') {
+              triggerReward(1, updated.nome_destinatario);
+            }
           }}
         />
       )}
 
-      {/* MODAL DE ENTREGA AGREGADA DE MÚLTIPLOS PACOTES (PORTARIA / CASA) */}
+      {/* MODAL WHATSAPP PARA ENTREGA EM GRUPO / PORTARIA */}
       {selectedGroupForDelivery && (
         <GroupedDeliveryWhatsAppModal
+          isOpen={true}
           deliveries={selectedGroupForDelivery}
           onClose={() => setSelectedGroupForDelivery(null)}
-          onConfirmGroupDelivery={handleConfirmGroupDelivery}
+          onConfirmDelivery={handleConfirmGroupDelivery}
         />
       )}
-
     </div>
   );
 };

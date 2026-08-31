@@ -1,5 +1,6 @@
 import React from 'react';
 import { Package, MapPin, CheckCircle2, Clock, Plus, AlertTriangle, TrendingUp, Users, Truck } from 'lucide-react';
+import { getStreetInfo } from '../data/cajuStreets';
 
 interface HeaderProps {
   activeStreet: string;
@@ -26,6 +27,8 @@ export const Header: React.FC<HeaderProps> = ({
   insucessoCount = 0,
   totalAllDeliveries = 0,
 }) => {
+  const streetInfo = React.useMemo(() => getStreetInfo(activeStreet), [activeStreet]);
+
   return (
     <header className="bg-slate-900 text-white sticky top-0 z-30 shadow-md border-b border-slate-800">
       <div className="max-w-xl mx-auto px-3.5 pt-2.5 pb-2">
@@ -120,7 +123,7 @@ export const Header: React.FC<HeaderProps> = ({
               <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
               <div className="truncate flex-1">
                 <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider leading-none mb-0.5">
-                  Rua em Atendimento
+                  Rua em Atendimento • <span className="text-emerald-400">{streetInfo.sector}</span>
                 </span>
                 <span className="text-xs font-black text-white truncate block">
                   {activeStreet}

@@ -41,6 +41,10 @@ function loadDeliveries(): DeliveryRecord[] {
 }
 
 function saveDeliveries(deliveries: DeliveryRecord[]): void {
+  // Evita escritas em disco síncronas que acionam o file-watcher em modo dev
+  if (process.env.NODE_ENV !== 'production' && !process.env.PERSIST_DISK) {
+    return;
+  }
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -270,7 +274,21 @@ Não invente dados. Se não localizar algum campo, deixe como string vazia "".`,
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server SafaSanha (LogiScan) rodando em http://0.0.0.0:${PORT}`);
+    console.log(`Server SafaSanha (LogiScan) rodando em http://localhost:${PORT}`);
+  });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`Aviso: A porta ${PORT} está em uso. Tentando a porta ${PORT + 1}...`);
+      const fallbackServer = app.listen(PORT + 1, '0.0.0.0', () => {
+        console.log(`Server SafaSanha (LogiScan) rodando em http://localhost:${PORT + 1}`);
+      });
+      fallbackServer.on('error', (e: any) => {
+        console.error('Erro ao iniciar servidor na porta secundária:', e);
+      });
+    } else {
+      console.error('Erro no servidor:', err);
+    }
   });
 
   const shutdown = () => {

@@ -12,7 +12,8 @@ import {
   RotateCcw,
   AlertTriangle,
   Users,
-  ChevronRight
+  ChevronRight,
+  ShieldCheck
 } from 'lucide-react';
 import { DeliveryData } from '../types';
 import {
@@ -22,6 +23,7 @@ import {
   getFormattedCurrentTime,
   getFormattedCurrentDate
 } from '../utils/whatsappHelper';
+import { PackageTimelineModal } from './PackageTimelineModal';
 
 interface PackageCardProps {
   delivery: DeliveryData;
@@ -50,6 +52,7 @@ export const PackageCard: React.FC<PackageCardProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [isTimelineOpen, setIsTimelineOpen] = useState(false);
 
   const handleOpenModal = (mode: 'entrega' | 'insucesso' = 'entrega') => {
     if (onOpenDeliveryModal) {
@@ -282,6 +285,15 @@ export const PackageCard: React.FC<PackageCardProps> = ({
           </button>
         )}
 
+        {/* Botão de Linha do Tempo / Antiacareação */}
+        <button
+          onClick={() => setIsTimelineOpen(true)}
+          className="p-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all cursor-pointer"
+          title="Ver Linha Temporal / Prova Definitiva"
+        >
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+        </button>
+
         {/* Botão de Cópia Rápida */}
         <button
           onClick={handleQuickCopy}
@@ -305,6 +317,15 @@ export const PackageCard: React.FC<PackageCardProps> = ({
           )}
         </button>
       </div>
+
+      {/* Modal da Linha Temporal Antiacareação */}
+      {isTimelineOpen && (
+        <PackageTimelineModal
+          isOpen={true}
+          delivery={delivery}
+          onClose={() => setIsTimelineOpen(false)}
+        />
+      )}
     </div>
   );
 };
