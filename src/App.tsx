@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Header } from './components/Header';
+import { FloatingMoneyReward } from './components/FloatingMoneyReward';
+import { CashCelebrationBurst } from './components/CashCelebrationBurst';
 import { StreetPackageManager } from './components/StreetPackageManager';
 import { GeneralSummaryTab } from './components/GeneralSummaryTab';
 import { AssociationTab } from './components/AssociationTab';
@@ -27,6 +29,28 @@ const DEFAULT_STREETS = CAJU_PRIMARY_AREAS;
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'ruas' | 'resumo' | 'associacao'>('ruas');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const saved = localStorage.getItem('safasanha_theme_v2');
+      if (saved === 'dark' || saved === 'light') return saved;
+    } catch (_e) {}
+    return 'light';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('safasanha_theme_v2', theme);
+    } catch (_e) {}
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
   const [activeStreet, setActiveStreet] = useState<string>('Rua Carlos Seidl');
   const [isRegionModalOpen, setIsRegionModalOpen] = useState<boolean>(false);
 
@@ -209,10 +233,14 @@ export default function App() {
   const pendingCount = streetDeliveries.length - deliveredCount - insucessoCount;
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 font-sans flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
+    <div className={`min-h-screen font-sans flex flex-col antialiased transition-colors duration-200 selection:bg-emerald-500 selection:text-white ${
+    theme === 'dark' ? 'dark bg-[#090d16] text-slate-100' : 'bg-[#f4f6f9] text-slate-900'
+  }`}>
       {/* Header Compacto Mobile */}
       <Header
         activeStreet={activeStreet}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenStreetPicker={() => setIsRegionModalOpen(true)}
@@ -264,6 +292,10 @@ export default function App() {
           <AssociationTab />
         )}
       </main>
+      {/* Recompensa Leve de Moedas Flutuante Não-Bloqueante */}
+      <FloatingMoneyReward />
+      {/* Efeito Visual Rico de Moedas e Notas Voadoras */}
+      <CashCelebrationBurst />
     </div>
   );
 }

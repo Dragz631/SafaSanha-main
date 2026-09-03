@@ -21,6 +21,8 @@ import {
   Bookmark
 } from 'lucide-react';
 import { DeliveryData } from '../types';
+import { saveAddressToMemory } from '../utils/addressMemoryStorage';
+import { triggerCoinBurst } from '../utils/rewardEffect';
 import {
   buildWhatsAppMessage,
   buildInsucessoWhatsAppMessage,
@@ -43,6 +45,7 @@ interface DeliveryWhatsAppModalProps {
   onClose: () => void;
   onConfirmDelivered?: () => void;
   onConfirmDelivery?: (updated: DeliveryData) => void;
+  onSaveDelivery?: (updated: DeliveryData) => void;
 }
 
 const RECEIVER_PRESETS = [
@@ -252,15 +255,31 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
       data_hora: new Date().toISOString(),
     };
 
+    // Salva imediatamente na memória da rua
+    try {
+      saveAddressToMemory(streetName, houseNumber, complement, clientName);
+    } catch (_err) {
+      console.warn('Erro ao salvar endereço na memória:', _err);
+    }
+
     if (onConfirmDelivery) {
       onConfirmDelivery(updated);
-    } else if (onConfirmDelivered) {
+    }
+    if ((onSaveDelivery as any)) {
+      (onSaveDelivery as any)(updated);
+    }
+    if (onConfirmDelivered) {
       onConfirmDelivered();
     }
   };
 
-  const handleShareAndConfirm = async () => {
+  const handleShareAndConfirm = async (e?: React.MouseEvent) => {
     const targetStatus = mode === 'entrega' ? 'entregue' : 'insucesso';
+    if (targetStatus === 'entregue') {
+      try {
+        triggerCoinBurst(1, clientName, e || null);
+      } catch (_err) {}
+    }
     
     // Dispara compartilhamento no celular
     const res = await shareOrOpenWhatsApp(currentMessage);
@@ -288,8 +307,13 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
     }
   };
 
-  const handleSaveWithoutOpening = () => {
+  const handleSaveWithoutOpening = (e?: React.MouseEvent) => {
     const targetStatus = mode === 'entrega' ? 'entregue' : 'insucesso';
+    if (targetStatus === 'entregue') {
+      try {
+        triggerCoinBurst(1, clientName, e || null);
+      } catch (_err) {}
+    }
     saveUpdatedDelivery(targetStatus);
     onClose();
   };
@@ -685,7 +709,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
           )}
 
           <button
-            onClick={handleShareAndConfirm}
+            onClick={(e) => handleShareAndConfirm(e)}
             className={`w-full py-3.5 px-4 text-white font-black text-sm rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.98] ${
               mode === 'entrega'
                 ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/30'
@@ -702,7 +726,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
 
           <div className="flex items-center justify-between pt-1">
             <button
-              onClick={handleSaveWithoutOpening}
+              onClick={(e) => handleSaveWithoutOpening(e)}
               className="text-xs font-bold text-slate-600 hover:text-slate-900 py-1 px-2 rounded-lg cursor-pointer"
             >
               Salvar sem abrir Zap

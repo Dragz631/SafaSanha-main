@@ -35,13 +35,56 @@ import { ManualPackageModal } from './ManualPackageModal';
 import { DeliveryWhatsAppModal } from './DeliveryWhatsAppModal';
 import { RegionStreetsModal } from './RegionStreetsModal';
 import { QuickBatchAddModal } from './QuickBatchAddModal';
-import { MoneyRewardOverlay } from './MoneyRewardOverlay';
+import { triggerCoinBurst } from '../utils/rewardEffect';
+import { StreetAddressMemoryModal } from './StreetAddressMemoryModal';
+import { QuickMemoryManager } from './QuickMemoryManager';
+import { saveAddressToMemory, getSavedAddressesForStreet } from '../utils/addressMemoryStorage';
 import {
   getStreetInfo,
   MANILHA_SUB_STREETS,
   isManilhaDelivery,
   getManilhaSubStreet
 } from '../data/cajuStreets';
+
+
+export type ComplementGroupType = 'portaria' | 'vila' | 'residencia';
+
+export const classifyComplementType = (comp?: string): ComplementGroupType => {
+  if (!comp) return 'residencia';
+  const c = comp.toLowerCase().trim();
+
+  // Prédio / Apartamento / Portaria
+  if (
+    c.includes('apto') ||
+    c.includes('apartamento') ||
+    c.includes('bloco') ||
+    c.includes('sala') ||
+    c.includes('conjunto') ||
+    c.includes('condominio') ||
+    c.includes('cond.') ||
+    c.includes('cobertura') ||
+    c.includes('edificio') ||
+    c.includes('ed.')
+  ) {
+    return 'portaria';
+  }
+
+  // Vila / Casas
+  if (
+    c.includes('casa') ||
+    c.includes('vila') ||
+    c.includes('fundos') ||
+    c.includes('frente') ||
+    c.includes('sobrado') ||
+    c.includes('terreo') ||
+    c.includes('vilinha') ||
+    c.includes('bione')
+  ) {
+    return 'vila';
+  }
+
+  return 'residencia';
+};
 
 interface StreetPackageManagerProps {
   deliveries: DeliveryData[];
@@ -83,6 +126,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
   const [isManualModalOpen, setIsManualModalOpen] = useState<boolean>(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState<boolean>(false);
+  const [isMemoryModalOpen, setIsMemoryModalOpen] = useState<boolean>(false);
   const [editingDelivery, setEditingDelivery] = useState<DeliveryData | null>(null);
   
   // Identifica se a área ativa é o Setor Unificado da Manilha
@@ -118,6 +162,22 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   const [filterStatus, setFilterStatus] = useState<'todos' | 'pendente' | 'entregue' | 'insucesso'>('todos');
   const [sortBy, setSortBy] = useState<'numero_asc' | 'numero_desc' | 'pendentes_primeiro' | 'hora_desc' | 'codigo'>('numero_asc');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [cadastroTab, setCadastroTab] = useState<'rapido' | 'digitar'>('rapido');
+
+  // Casas salvas na memória para esta rua
+  const savedAddressesForActiveStreet = useMemo(() => {
+    return getSavedAddressesForStreet(isManilhaActive ? 'Manilha' : activeStreet);
+  }, [activeStreet, isManilhaActive, isMemoryModalOpen, deliveries]);
+
+  // Sugestões instantâneas ao digitar número
+  const quickNumberSuggestions = useMemo(() => {
+    if (!quickHouseNumber.trim()) return [];
+    const clean = quickHouseNumber.trim().toLowerCase();
+    const match = savedAddressesForActiveStreet.find(
+      (h) => h.houseNumber.toLowerCase() === clean
+    );
+    return match ? match.residents : [];
+  }, [quickHouseNumber, savedAddressesForActiveStreet]);
 
   const regionModalOpen = isRegionModalOpen !== undefined ? isRegionModalOpen : internalRegionModalOpen;
   const openRegionModal = onOpenRegionModal || (() => setInternalRegionModalOpen(true));
@@ -188,9 +248,13 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     }
     const cleanActive = activeStreet.trim().toLowerCase();
     return deliveries.filter((d) => {
+      const st = (d.endereco_rua || '').trim().toLowerCase();
+      if (st && (st === cleanActive || cleanActive.includes(st) || st.includes(cleanActive))) {
+        return true;
+      }
       if (isManilhaDelivery(d)) return false;
-      const st = (d.endereco_rua || d.endereco_completo || '').toLowerCase();
-      return st.includes(cleanActive) || cleanActive.includes(st);
+      const comp = (d.endereco_completo || '').toLowerCase();
+      return comp.includes(cleanActive) || cleanActive.includes(comp);
     });
   }, [deliveries, activeStreet, isManilhaActive]);
 
@@ -242,7 +306,14 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
       origem_leitura: 'manual',
     };
 
+    // Salva imediatamente na memória da rua
+    try {
+      saveAddressToMemory(targetStreet, cleanNum, comp || undefined, client, targetSub);
+    } catch (_err) {}
+
     onAddDelivery(newDelivery);
+    setFilterStatus('todos');
+    setSearchQuery('');
 
     try {
       if ('vibrate' in navigator) navigator.vibrate(40);
@@ -334,27 +405,94 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     }).filter((g) => g.count > 0);
   }, [isManilhaActive, sortedDeliveries]);
 
-  // Agrupamento por número de casa (para ruas normais ou dentro de cada grupo)
+  // Agrupamento Inteligente por Número E Complemento (Diferencia Vila e Apartamento no mesmo número!)
   const groupedHouses = useMemo(() => {
-    const map = new Map<string, DeliveryData[]>();
+    // 1. Mapeia todos os pacotes pelo número da casa
+    const houseNumberMap = new Map<string, DeliveryData[]>();
 
     sortedDeliveries.forEach((d) => {
       const num = d.numero_casa || d.endereco_numero || 'S/N';
-      if (!map.has(num)) {
-        map.set(num, []);
+      if (!houseNumberMap.has(num)) {
+        houseNumberMap.set(num, []);
       }
-      map.get(num)!.push(d);
+      houseNumberMap.get(num)!.push(d);
     });
 
-    return Array.from(map.entries()).map(([houseNumber, items]) => ({
-      houseNumber,
-      items,
-      count: items.length,
-      hasMultiple: items.length > 1,
-    }));
+    interface SubGroupItem {
+      groupKey: string;
+      houseNumber: string;
+      category: 'portaria' | 'vila' | 'residencia';
+      groupLabel: string;
+      items: DeliveryData[];
+      count: number;
+      hasMultiple: boolean;
+    }
+
+    const groups: SubGroupItem[] = [];
+
+    // 2. Para cada número, separa em grupos dedicados:
+    //    - Prédio / Apartamentos (Portaria)
+    //    - Vila de Casas (Entrega individual)
+    //    - Residência única (Sem complemento ou morador único)
+    houseNumberMap.forEach((items, houseNumber) => {
+      const aptoItems: DeliveryData[] = [];
+      const vilaItems: DeliveryData[] = [];
+      const residenciaItems: DeliveryData[] = [];
+
+      items.forEach((d) => {
+        const cat = classifyComplementType(d.complemento || d.endereco_complemento);
+        if (cat === 'portaria') {
+          aptoItems.push(d);
+        } else if (cat === 'vila') {
+          vilaItems.push(d);
+        } else {
+          residenciaItems.push(d);
+        }
+      });
+
+      // SE HOUVER APARTAMENTOS: Cria Card dedicado de Prédio / Portaria
+      if (aptoItems.length > 0) {
+        groups.push({
+          groupKey: `${houseNumber}_portaria`,
+          houseNumber,
+          category: 'portaria',
+          groupLabel: `Nº ${houseNumber} • Prédio / Apartamentos`,
+          items: aptoItems,
+          count: aptoItems.length,
+          hasMultiple: aptoItems.length > 1,
+        });
+      }
+
+      // SE HOUVER VILA DE CASAS: Cria Card dedicado de Vila (Entrega de casa em casa!)
+      if (vilaItems.length > 0) {
+        // Se houver residências avulsas neste número que também tem vila, incorpora na vila
+        const mergedVila = [...vilaItems, ...residenciaItems];
+        groups.push({
+          groupKey: `${houseNumber}_vila`,
+          houseNumber,
+          category: 'vila',
+          groupLabel: `Nº ${houseNumber} • Vila de Casas`,
+          items: mergedVila,
+          count: mergedVila.length,
+          hasMultiple: mergedVila.length > 1,
+        });
+      } else if (residenciaItems.length > 0) {
+        // Apenas residência normal
+        groups.push({
+          groupKey: `${houseNumber}_residencia`,
+          houseNumber,
+          category: 'residencia',
+          groupLabel: `Nº ${houseNumber}`,
+          items: residenciaItems,
+          count: residenciaItems.length,
+          hasMultiple: residenciaItems.length > 1,
+        });
+      }
+    });
+
+    return groups;
   }, [sortedDeliveries]);
 
-  // Contagem de casas com múltiplos pacotes
   const multipleHousesCount = useMemo(() => {
     return groupedHouses.filter((g) => g.hasMultiple).length;
   }, [groupedHouses]);
@@ -409,16 +547,10 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
 
   return (
     <div className="space-y-3 pb-24">
-      {/* OVERLAY DE RECOMPENSA EM DINHEIRO (ANIMAÇÃO AO CONCLUIR ENTREGA) */}
-      <MoneyRewardOverlay
-        isVisible={rewardState.isVisible}
-        packageCount={rewardState.packageCount}
-        clientName={rewardState.clientName}
-        onClose={() => setRewardState({ isVisible: false })}
-      />
+
 
       {/* 1. PAINEL DE CONTROLE DA RUA ATIVA COM BARRA DE PROGRESSO & RUAS DO DIA */}
-      <div className="bg-white rounded-3xl p-3.5 border border-slate-200/90 shadow-sm space-y-2.5">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl p-3.5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2.5 transition-colors">
         
         {/* Rua Atual & Botão Trocar Rua */}
         <div className="flex items-center justify-between gap-2">
@@ -437,7 +569,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                   {activeStreetInfo.sector}
                 </span>
               </div>
-              <h1 className="text-base sm:text-lg font-black text-slate-900 leading-tight truncate">
+              <h1 className="text-base sm:text-lg font-black text-slate-900 dark:text-slate-100 leading-tight truncate">
                 {activeStreet}
               </h1>
             </div>
@@ -445,7 +577,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
 
           <button
             onClick={openRegionModal}
-            className="text-[11px] font-extrabold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl border border-emerald-300/80 shrink-0 cursor-pointer flex items-center gap-1 transition-all active:scale-95 shadow-xs"
+            className="text-[11px] font-extrabold text-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-3 py-1.5 rounded-xl border border-emerald-300/80 dark:border-emerald-800/60 shrink-0 cursor-pointer flex items-center gap-1 transition-all active:scale-95 shadow-xs"
           >
             <Layers className="w-3.5 h-3.5 text-emerald-600" />
             <span>Definir Ruas de Hoje</span>
@@ -456,19 +588,19 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         <div className={`grid gap-2 text-center pt-1 ${
           insucessoCount > 0 ? 'grid-cols-4' : 'grid-cols-3'
         }`}>
-          <div className="bg-slate-50 p-2 rounded-xl border border-slate-200/80">
+          <div className="bg-slate-50 dark:bg-slate-800/50 p-2 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
             <span className="text-[10px] font-bold text-slate-500 block">Total</span>
-            <span className="text-base font-black text-slate-900">{totalCount}</span>
+            <span className="text-base font-black text-slate-900 dark:text-slate-100">{totalCount}</span>
           </div>
 
-          <div className="bg-amber-50 p-2 rounded-xl border border-amber-200">
+          <div className="bg-amber-50/60 dark:bg-amber-950/30 p-2 rounded-xl border border-amber-200/70 dark:border-amber-800/40">
             <span className="text-[10px] font-bold text-amber-800 block">Pendentes</span>
-            <span className="text-base font-black text-amber-900">{pendingCount}</span>
+            <span className="text-base font-black text-amber-900 dark:text-amber-300">{pendingCount}</span>
           </div>
 
-          <div className="bg-emerald-50 p-2 rounded-xl border border-emerald-200">
+          <div className="bg-emerald-50/60 dark:bg-emerald-950/30 p-2 rounded-xl border border-emerald-200/70 dark:border-emerald-800/40">
             <span className="text-[10px] font-bold text-emerald-800 block">Entregues</span>
-            <span className="text-base font-black text-emerald-900">{deliveredCount}</span>
+            <span className="text-base font-black text-emerald-900 dark:text-emerald-300">{deliveredCount}</span>
           </div>
 
           {insucessoCount > 0 && (
@@ -609,102 +741,161 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           </div>
         )}
 
-        {/* Formulário Inline Super Rápido com Número da Casa e Complemento */}
-        <form onSubmit={handleQuickAdd} className="space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            {/* Campo de Número da Casa - Foco Rápido */}
-            <div className="w-24 sm:w-28 shrink-0">
-              <input
-                ref={quickInputRef}
-                type="text"
-                inputMode="numeric"
-                value={quickHouseNumber}
-                onChange={(e) => setQuickHouseNumber(e.target.value)}
-                placeholder="Nº Casa"
-                className="w-full px-2.5 py-2 bg-white text-slate-900 placeholder-slate-400 rounded-xl text-base font-black text-center focus:outline-none focus:ring-2 focus:ring-amber-300 shadow-inner"
-              />
-            </div>
+        {/* ABAS DO CADASTRO: MODO RÁPIDO (CASAS SALVAS) vs DIGITAR NOVO */}
+        <div className="flex items-center gap-1.5 bg-black/25 p-1 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setCadastroTab('rapido')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              cadastroTab === 'rapido'
+                ? 'bg-amber-400 text-slate-950 shadow-xs'
+                : 'text-white/80 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 fill-current" />
+            <span>⚡ Modo Rápido (Casas Salvas)</span>
+          </button>
 
-            {/* Campo de Complemento (Apto, Bloco, etc.) */}
-            <div className="w-28 sm:w-32 shrink-0">
-              <input
-                ref={quickComplementInputRef}
-                type="text"
-                value={quickComplement}
-                onChange={(e) => setQuickComplement(e.target.value)}
-                placeholder="Compl. (Apto...)"
-                className="w-full px-2.5 py-2 bg-white/95 text-slate-900 placeholder-slate-400 rounded-xl text-xs font-black text-center focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-300 shadow-inner"
-              />
-            </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCadastroTab('digitar');
+              setTimeout(() => quickInputRef.current?.focus(), 80);
+            }}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              cadastroTab === 'digitar'
+                ? 'bg-white text-slate-950 shadow-xs'
+                : 'text-white/80 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>✍️ Digitar Novo</span>
+          </button>
+        </div>
 
-            {/* Nome do Destinatário Opcional */}
-            <div className="flex-1 min-w-0">
-              <input
-                type="text"
-                value={quickClientName}
-                onChange={(e) => setQuickClientName(e.target.value)}
-                placeholder="Morador (Opcional)"
-                className="w-full px-2.5 py-2 bg-white/90 text-slate-900 placeholder-slate-400 rounded-xl text-xs font-bold focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
-              />
-            </div>
+        {/* CONTEÚDO DINÂMICO: MODO RÁPIDO (SELEÇÃO DIRETA) OU FORMULÁRIO DE DIGITAÇÃO */}
+        {cadastroTab === 'rapido' ? (
+          <QuickMemoryManager
+            streetName={activeStreet}
+            isManilhaActive={isManilhaActive}
+            manilhaSubStreet={manilhaSubStreet}
+            currentDeliveries={deliveries}
+            onAddDelivery={(newDel) => {
+              onAddDelivery(newDel);
+              setFilterStatus('todos');
+              setSearchQuery('');
+            }}
+            onSelectForManualAdd={(houseNum, comp, subStreet) => {
+              setQuickHouseNumber(houseNum);
+              if (comp) setQuickComplement(comp);
+              if (subStreet) setManilhaSubStreet(subStreet);
+              setCadastroTab('digitar');
+              setTimeout(() => {
+                quickComplementInputRef.current?.focus();
+              }, 100);
+            }}
+            onToast={(msg) => {
+              setQuickToast(msg);
+              setTimeout(() => setQuickToast(null), 2500);
+            }}
+          />
+        ) : (
+          <form onSubmit={handleQuickAdd} className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              {/* Campo de Número da Casa - Foco Rápido */}
+              <div className="w-24 sm:w-28 shrink-0">
+                <input
+                  ref={quickInputRef}
+                  type="text"
+                  inputMode="numeric"
+                  value={quickHouseNumber}
+                  onChange={(e) => setQuickHouseNumber(e.target.value)}
+                  placeholder="Nº Casa"
+                  className="w-full px-2.5 py-2 bg-white text-slate-900 placeholder-slate-400 rounded-xl text-base font-black text-center focus:outline-none focus:ring-2 focus:ring-amber-300 shadow-inner"
+                />
+              </div>
 
-            {/* Botão de Voz */}
-            <button
-              type="button"
-              onClick={toggleQuickVoice}
-              className={`p-2 rounded-xl text-white cursor-pointer transition-all shrink-0 ${
-                isQuickListening ? 'bg-rose-500 animate-pulse' : 'bg-white/20 hover:bg-white/30'
-              }`}
-              title="Falar número e complemento por voz"
-            >
-              <Mic className="w-4 h-4" />
-            </button>
+              {/* Campo de Complemento (Apto, Bloco, etc.) */}
+              <div className="w-28 sm:w-32 shrink-0">
+                <input
+                  ref={quickComplementInputRef}
+                  type="text"
+                  value={quickComplement}
+                  onChange={(e) => setQuickComplement(e.target.value)}
+                  placeholder="Compl. (Apto...)"
+                  className="w-full px-2.5 py-2 bg-white/95 text-slate-900 placeholder-slate-400 rounded-xl text-xs font-black text-center focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-300 shadow-inner"
+                />
+              </div>
 
-            {/* Botão de Adicionar (Enter) */}
-            <button
-              type="submit"
-              className="px-3 py-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-sm cursor-pointer shrink-0 flex items-center gap-1 transition-all"
-              title="Adicionar Pacote (Pressione Enter)"
-            >
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Adicionar</span>
-            </button>
-          </div>
+              {/* Nome do Destinatário Opcional */}
+              <div className="flex-1 min-w-0">
+                <input
+                  type="text"
+                  value={quickClientName}
+                  onChange={(e) => setQuickClientName(e.target.value)}
+                  placeholder="Morador (Opcional)"
+                  className="w-full px-2.5 py-2 bg-white/90 text-slate-900 placeholder-slate-400 rounded-xl text-xs font-bold focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                />
+              </div>
 
-          {/* Quick Chips de Complementos Rápidos em 1 toque */}
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5 pb-0.5">
-            <span className="text-[10px] font-extrabold text-white/80 shrink-0">
-              +Compl:
-            </span>
-            {['Apto ', 'Bloco A', 'Bloco B', 'Casa 2', 'Fundos', 'Sobrado', 'Loja '].map((chip) => (
+              {/* Botão de Voz */}
               <button
-                key={chip}
                 type="button"
-                onClick={() => {
-                  setQuickComplement(chip);
-                  quickComplementInputRef.current?.focus();
-                }}
-                className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all cursor-pointer shrink-0 ${
-                  quickComplement.toLowerCase().includes(chip.trim().toLowerCase())
-                    ? 'bg-amber-300 text-slate-950 font-black'
-                    : 'bg-white/15 hover:bg-white/25 text-white border border-white/20'
+                onClick={toggleQuickVoice}
+                className={`p-2 rounded-xl text-white cursor-pointer transition-all shrink-0 ${
+                  isQuickListening ? 'bg-rose-500 animate-pulse' : 'bg-white/20 hover:bg-white/30'
                 }`}
+                title="Falar número e complemento por voz"
               >
-                {chip.trim()}
+                <Mic className="w-4 h-4" />
               </button>
-            ))}
-            {quickComplement && (
+
+              {/* Botão de Adicionar (Enter) */}
               <button
-                type="button"
-                onClick={() => setQuickComplement('')}
-                className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold bg-rose-500/80 hover:bg-rose-600 text-white shrink-0"
-                title="Limpar complemento"
+                type="submit"
+                className="px-3 py-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-sm cursor-pointer shrink-0 flex items-center gap-1 transition-all"
+                title="Adicionar Pacote e Salvar na Memória"
               >
-                ✕
+                <Plus className="w-4 h-4" />
+                <span className="font-black">Adicionar</span>
               </button>
-            )}
-          </div>
-        </form>
+            </div>
+
+            {/* Chips Rápidos de Complementos Mais Usados */}
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5">
+              <span className="text-[10px] font-black uppercase text-amber-200 shrink-0">
+                +Compl:
+              </span>
+              {['Apto ', 'Bloco A', 'Bloco B', 'Casa 1', 'Casa 2', 'Fundos', 'Sobrado'].map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => {
+                    setQuickComplement(chip);
+                    quickComplementInputRef.current?.focus();
+                  }}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all cursor-pointer shrink-0 ${
+                    quickComplement.toLowerCase().includes(chip.trim().toLowerCase())
+                      ? 'bg-amber-300 text-slate-950 font-black'
+                      : 'bg-white/15 hover:bg-white/25 text-white border border-white/20'
+                  }`}
+                >
+                  {chip.trim()}
+                </button>
+              ))}
+              {quickComplement && (
+                <button
+                  type="button"
+                  onClick={() => setQuickComplement('')}
+                  className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold bg-rose-500/80 hover:bg-rose-600 text-white shrink-0"
+                  title="Limpar complemento"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </form>
+        )}
 
         {/* Toast Flutuante de Sucesso Rápido */}
         {quickToast && (
@@ -715,7 +906,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
       </div>
 
       {/* 3. FILTRO, BUSCA E ORDENAÇÃO DINÂMICA */}
-      <div className="bg-white rounded-2xl p-2.5 border border-slate-200 shadow-xs space-y-2">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl p-2.5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2 transition-colors">
         {/* Campo de Busca Rápida */}
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -728,7 +919,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                 ? 'Buscar por Rua (Ex: Rua B, Leão XIII), número ou morador...'
                 : 'Buscar por Nº casa, morador ou pacote...'
             }
-            className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500 font-bold"
+            className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-emerald-500 font-bold"
           />
         </div>
 
@@ -890,8 +1081,10 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
             viewMode === 'grouped' ? (
               groupedHouses.map((group) => (
                 <HouseGroupCard
-                  key={group.houseNumber}
+                  key={group.groupKey || group.houseNumber}
                   houseNumber={group.houseNumber}
+                  forcedCategory={group.category}
+                  groupLabel={group.groupLabel}
                   deliveries={group.items}
                   onOpenSingleDeliveryModal={(del, mode) => handleOpenDeliveryModal(del, mode || 'entrega')}
                   onOpenGroupDeliveryModal={(items) => handleOpenGroupDeliveryModal(items)}
@@ -998,12 +1191,27 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           delivery={selectedForDelivery}
           mode={deliveryModalMode}
           onClose={() => setSelectedForDelivery(null)}
+          onConfirmDelivery={(updated) => {
+            onUpdateDelivery(updated);
+            setSelectedForDelivery(null);
+            if (updated.status === 'entregue' || updated.status === 'concluido') {
+              triggerReward(1, updated.nome_destinatario);
+            }
+          }}
           onSaveDelivery={(updated) => {
             onUpdateDelivery(updated);
             setSelectedForDelivery(null);
             if (updated.status === 'entregue' || updated.status === 'concluido') {
               triggerReward(1, updated.nome_destinatario);
             }
+          }}
+          onConfirmDelivered={() => {
+            if (selectedForDelivery) {
+              const updated = { ...selectedForDelivery, status: 'entregue' as const };
+              onUpdateDelivery(updated);
+              triggerReward(1, updated.nome_destinatario);
+            }
+            setSelectedForDelivery(null);
           }}
         />
       )}
@@ -1014,9 +1222,27 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           isOpen={true}
           deliveries={selectedGroupForDelivery}
           onClose={() => setSelectedGroupForDelivery(null)}
+          onConfirmGroupDelivery={handleConfirmGroupDelivery}
           onConfirmDelivery={handleConfirmGroupDelivery}
         />
       )}
+
+      {/* MODAL DO CADERNO DE CASAS E MORADORES SALVOS */}
+      <StreetAddressMemoryModal
+        isOpen={isMemoryModalOpen}
+        onClose={() => setIsMemoryModalOpen(false)}
+        streetName={isManilhaActive ? 'Manilha' : activeStreet}
+        currentDeliveries={deliveries}
+        onAddSelectedPackages={(newPackages) => {
+          if (onAddBatchDeliveries) {
+            onAddBatchDeliveries(newPackages);
+          } else {
+            newPackages.forEach((p) => onAddDelivery(p));
+          }
+          setQuickToast(`Adicionado(s) ${newPackages.length} pacote(s) da memória!`);
+          setTimeout(() => setQuickToast(null), 2500);
+        }}
+      />
     </div>
   );
 };

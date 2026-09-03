@@ -18,6 +18,8 @@ import {
   Bookmark
 } from 'lucide-react';
 import { DeliveryData } from '../types';
+import { saveAddressToMemory } from '../utils/addressMemoryStorage';
+import { triggerCoinBurst } from '../utils/rewardEffect';
 import {
   buildGroupedWhatsAppMessage,
   shareOrOpenWhatsApp,
@@ -36,7 +38,8 @@ interface GroupedDeliveryWhatsAppModalProps {
   isOpen?: boolean;
   deliveries: DeliveryData[];
   onClose: () => void;
-  onConfirmGroupDelivery: (updatedDeliveries: DeliveryData[]) => void;
+  onConfirmGroupDelivery?: (updatedDeliveries: DeliveryData[]) => void;
+  onConfirmDelivery?: (updatedDeliveries: DeliveryData[]) => void;
 }
 
 const RECEIVER_PRESETS = [
@@ -136,7 +139,10 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
     });
   }, [activeDeliveries, streetName, houseNumber, computedReceiver, deliveryDate, deliveryTime]);
 
-  const handleShareAndConfirm = async () => {
+  const handleShareAndConfirm = async (e?: React.MouseEvent) => {
+    try {
+      triggerCoinBurst(activeDeliveries.length, 'Portaria / Condomínio', e || null);
+    } catch (_err) {}
     // Salva o porteiro na memória se for portaria e tiver nome
     if (receiverType === 'portaria' && receiverCustomText.trim()) {
       saveDoormanForAddress(streetName, houseNumber, receiverCustomText.trim());
@@ -181,7 +187,10 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
     }
   };
 
-  const handleSaveWithoutOpening = () => {
+  const handleSaveWithoutOpening = (e?: React.MouseEvent) => {
+    try {
+      triggerCoinBurst(activeDeliveries.length, 'Portaria / Condomínio', e || null);
+    } catch (_err) {}
     if (receiverType === 'portaria' && receiverCustomText.trim()) {
       saveDoormanForAddress(streetName, houseNumber, receiverCustomText.trim());
     }
@@ -480,7 +489,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
           )}
 
           <button
-            onClick={handleShareAndConfirm}
+            onClick={(e) => handleShareAndConfirm(e)}
             className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.98]"
           >
             <Share2 className="w-5 h-5 text-white" />
@@ -489,7 +498,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
 
           <div className="flex items-center justify-between pt-1">
             <button
-              onClick={handleSaveWithoutOpening}
+              onClick={(e) => handleSaveWithoutOpening(e)}
               className="text-xs font-bold text-slate-600 hover:text-slate-900 py-1 px-2 rounded-lg cursor-pointer"
             >
               Baixar todos sem abrir Zap
