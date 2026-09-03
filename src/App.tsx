@@ -4,6 +4,7 @@ import { FloatingMoneyReward } from './components/FloatingMoneyReward';
 import { CashCelebrationBurst } from './components/CashCelebrationBurst';
 import { StreetPackageManager } from './components/StreetPackageManager';
 import { GeneralSummaryTab } from './components/GeneralSummaryTab';
+import { CloseDayModal } from './components/CloseDayModal';
 import { AssociationTab } from './components/AssociationTab';
 import { DeliveryData } from './types';
 import { INITIAL_DELIVERIES } from './data/sampleData';
@@ -53,6 +54,7 @@ export default function App() {
   };
   const [activeStreet, setActiveStreet] = useState<string>('Rua Carlos Seidl');
   const [isRegionModalOpen, setIsRegionModalOpen] = useState<boolean>(false);
+  const [isCloseDayModalOpen, setIsCloseDayModalOpen] = useState<boolean>(false);
 
   // Lista de ruas selecionadas para a rota de hoje
   const [savedStreets, setSavedStreets] = useState<string[]>(() => {
@@ -271,6 +273,7 @@ export default function App() {
             isRegionModalOpen={isRegionModalOpen}
             onOpenRegionModal={() => setIsRegionModalOpen(true)}
             onCloseRegionModal={() => setIsRegionModalOpen(false)}
+            onOpenCloseDayModal={() => setIsCloseDayModalOpen(true)}
           />
         )}
 
@@ -296,6 +299,16 @@ export default function App() {
       <FloatingMoneyReward />
       {/* Efeito Visual Rico de Moedas e Notas Voadoras */}
       <CashCelebrationBurst />
+      {/* Modal de Encerramento do Dia Global */}
+      <CloseDayModal
+        isOpen={isCloseDayModalOpen}
+        deliveries={deliveries}
+        onClose={() => setIsCloseDayModalOpen(false)}
+        onConfirmCloseDay={(params) => {
+          setDeliveries(params.nextDayDeliveries);
+          setIsCloseDayModalOpen(false);
+        }}
+      />
     </div>
   );
 }

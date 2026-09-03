@@ -38,6 +38,7 @@ import { QuickBatchAddModal } from './QuickBatchAddModal';
 import { triggerCoinBurst } from '../utils/rewardEffect';
 import { StreetAddressMemoryModal } from './StreetAddressMemoryModal';
 import { QuickMemoryManager } from './QuickMemoryManager';
+import { StreetCompletedModal } from './StreetCompletedModal';
 import { saveAddressToMemory, getSavedAddressesForStreet } from '../utils/addressMemoryStorage';
 import {
   getStreetInfo,
@@ -102,6 +103,7 @@ interface StreetPackageManagerProps {
   isRegionModalOpen?: boolean;
   onOpenRegionModal?: () => void;
   onCloseRegionModal?: () => void;
+  onOpenCloseDayModal?: () => void;
 }
 
 export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
@@ -120,6 +122,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   isRegionModalOpen,
   onOpenRegionModal,
   onCloseRegionModal,
+  onOpenCloseDayModal,
 }) => {
   // Modais locais
   const [internalRegionModalOpen, setInternalRegionModalOpen] = useState<boolean>(false);
@@ -267,6 +270,58 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     (d) => d.status === 'insucesso'
   ).length;
   const pendingCount = totalCount - deliveredCount - insucessoCount;
+
+  // Lista de pacotes que tiveram insucesso nesta rua
+  const failedDeliveries = useMemo(
+    () => streetDeliveries.filter((d) => d.status === 'insucesso'),
+    [streetDeliveries]
+  );
+
+  // Calcula quantas outras ruas ainda possuem pacotes pendentes
+  const remainingStreets = useMemo(() => {
+    const streetPendingMap = new Map<string, number>();
+    deliveries.forEach((d) => {
+      const isPending =
+        d.status !== 'entregue' && d.status !== 'concluido' && d.status !== 'insucesso';
+      if (isPending) {
+        const st = d.sub_rua_manilha || d.endereco_rua || 'Outra Rua';
+        streetPendingMap.set(st, (streetPendingMap.get(st) || 0) + 1);
+      }
+    });
+
+    const currentKey = isManilhaActive ? 'Manilha' : activeStreet;
+    streetPendingMap.delete(currentKey);
+    if (isManilhaActive && manilhaSubStreet) {
+      streetPendingMap.delete(manilhaSubStreet);
+    }
+    return Array.from(streetPendingMap.keys());
+  }, [deliveries, activeStreet, isManilhaActive, manilhaSubStreet]);
+
+  // Modal de Celebração de Rua Finalizada & Decisão de Insucessos
+  const [isStreetCompletedModalOpen, setIsStreetCompletedModalOpen] = useState<boolean>(false);
+  const prevPendingRef = useRef<number | null>(null);
+  const completedStreetRef = useRef<string>('');
+
+  useEffect(() => {
+    if (
+      prevPendingRef.current !== null &&
+      prevPendingRef.current > 0 &&
+      pendingCount === 0 &&
+      totalCount > 0 &&
+      completedStreetRef.current !== activeStreet
+    ) {
+      completedStreetRef.current = activeStreet;
+      const timer = setTimeout(() => {
+        setIsStreetCompletedModalOpen(true);
+      }, 700);
+      return () => clearTimeout(timer);
+    }
+
+    prevPendingRef.current = pendingCount;
+    if (pendingCount > 0) {
+      completedStreetRef.current = '';
+    }
+  }, [pendingCount, totalCount, activeStreet]);
 
   // Handler de Adição Relâmpago (1 Toque / Enter)
   const handleQuickAdd = (e: React.FormEvent) => {
@@ -1242,6 +1297,19 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           setQuickToast(`Adicionado(s) ${newPackages.length} pacote(s) da memória!`);
           setTimeout(() => setQuickToast(null), 2500);
         }}
+      />
+      {/* Modal de Celebração de Rua Finalizada & Decisão de Insucessos */}
+      <StreetCompletedModal
+        isOpen={isStreetCompletedModalOpen}
+        streetName={isManilhaActive ? `Manilha (${manilhaSubStreet || 'Geral'})` : activeStreet}
+        deliveredCount={deliveredCount}
+        insucessoCount={insucessoCount}
+        failedDeliveries={failedDeliveries}
+        remainingStreetsCount={remainingStreets.length}
+        nextStreetName={remainingStreets[0]}
+        onClose={() => setIsStreetCompletedModalOpen(false)}
+        onGoToNextStreet={(nextSt) => onSelectStreet(nextSt)}
+        onOpenCloseDayModal={onOpenCloseDayModal}
       />
     </div>
   );
