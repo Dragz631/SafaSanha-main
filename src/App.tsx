@@ -6,6 +6,8 @@ import { StreetPackageManager } from './components/StreetPackageManager';
 import { GeneralSummaryTab } from './components/GeneralSummaryTab';
 import { CloseDayModal } from './components/CloseDayModal';
 import { AssociationTab } from './components/AssociationTab';
+import { DailyStreetPickerModal } from './components/DailyStreetPickerModal';
+import { DeliveryWhatsAppModal } from './components/DeliveryWhatsAppModal';
 import { DeliveryData } from './types';
 import { INITIAL_DELIVERIES } from './data/sampleData';
 import { CAJU_PRIMARY_AREAS, isManilhaDelivery } from './data/cajuStreets';
@@ -25,13 +27,25 @@ const normalizeStreetList = (list: string[]): string[] => {
 
 const LOCAL_STORAGE_KEY = 'logiscan_deliveries_prod_v1';
 const STREETS_STORAGE_KEY = 'logiscan_today_streets_v5';
+const DAILY_CONFIRMED_DATE_KEY = 'safasanha_today_selection_date_v2';
 
 const DEFAULT_STREETS = CAJU_PRIMARY_AREAS;
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'ruas' | 'resumo' | 'associacao'>('ruas');
+  const [activeTab, setActiveTab] = useState<'ruas' | 'resumo' | 'associacao'>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam === 'resumo' || tabParam === 'associacao' || tabParam === 'ruas') return tabParam;
+    } catch (_e) {}
+    return 'ruas';
+  });
+
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
+      const params = new URLSearchParams(window.location.search);
+      const themeParam = params.get('theme');
+      if (themeParam === 'dark' || themeParam === 'light') return themeParam;
       const saved = localStorage.getItem('safasanha_theme_v2');
       if (saved === 'dark' || saved === 'light') return saved;
     } catch (_e) {}
@@ -55,6 +69,21 @@ export default function App() {
   const [activeStreet, setActiveStreet] = useState<string>('Rua Carlos Seidl');
   const [isRegionModalOpen, setIsRegionModalOpen] = useState<boolean>(false);
   const [isCloseDayModalOpen, setIsCloseDayModalOpen] = useState<boolean>(false);
+
+  // Modal Diário de Seleção 3x3 do Wireframe ("Qual as ruas de hoje?")
+  const [isDailyStreetPickerOpen, setIsDailyStreetPickerOpen] = useState<boolean>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('modal') === 'picker') return true;
+      if (params.get('tab') === 'resumo') return false;
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const confirmedDate = localStorage.getItem(DAILY_CONFIRMED_DATE_KEY);
+      // Se ainda não confirmou as ruas para o dia de hoje, abre automaticamente ao iniciar!
+      return confirmedDate !== todayStr;
+    } catch (_e) {
+      return false;
+    }
+  });
 
   // Lista de ruas selecionadas para a rota de hoje
   const [savedStreets, setSavedStreets] = useState<string[]>(() => {
@@ -234,6 +263,29 @@ export default function App() {
   ).length;
   const pendingCount = streetDeliveries.length - deliveredCount - insucessoCount;
 
+  // Moedas de Ouro do Dia: Cada pacote entregue soma 2 moedas de ouro
+  const totalDeliveredAll = useMemo(() => {
+    return deliveries.filter(
+      (d) => d.status === 'entregue' || d.status === 'concluido'
+    ).length;
+  }, [deliveries]);
+
+  const coinsToday = totalDeliveredAll * 2;
+
+  // Confirmação do Seletor 3x3 de Ruas Diárias
+  const handleConfirmDailyStreets = (selected: string[]) => {
+    if (selected.length > 0) {
+      setSavedStreets(selected);
+      if (!selected.some((s) => s.toLowerCase() === activeStreet.toLowerCase())) {
+        setActiveStreet(selected[0]);
+      }
+    }
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      localStorage.setItem(DAILY_CONFIRMED_DATE_KEY, todayStr);
+    } catch (_e) {}
+  };
+
   return (
     <div className={`min-h-screen font-sans flex flex-col antialiased transition-colors duration-200 selection:bg-emerald-500 selection:text-white ${
     theme === 'dark' ? 'dark bg-[#090d16] text-slate-100' : 'bg-[#f4f6f9] text-slate-900'
@@ -246,16 +298,18 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenStreetPicker={() => setIsRegionModalOpen(true)}
+        onOpenDailyStreetPicker={() => setIsDailyStreetPickerOpen(true)}
         onOpenAddStreet={() => setIsRegionModalOpen(true)}
         pendingCount={pendingCount}
         totalCount={streetDeliveries.length}
         deliveredCount={deliveredCount}
         insucessoCount={insucessoCount}
         totalAllDeliveries={deliveries.length}
+        coinsToday={coinsToday}
       />
 
       {/* Conteúdo Principal de acordo com a Aba Ativa */}
-      <main className="flex-1">
+      <main className="flex-1 max-w-xl mx-auto w-full px-3 sm:px-4 py-2">
         {activeTab === 'ruas' && (
           <StreetPackageManager
             deliveries={deliveries}
@@ -273,6 +327,7 @@ export default function App() {
             isRegionModalOpen={isRegionModalOpen}
             onOpenRegionModal={() => setIsRegionModalOpen(true)}
             onCloseRegionModal={() => setIsRegionModalOpen(false)}
+            onOpenDailyStreetPicker={() => setIsDailyStreetPickerOpen(true)}
             onOpenCloseDayModal={() => setIsCloseDayModalOpen(true)}
           />
         )}
@@ -295,10 +350,12 @@ export default function App() {
           <AssociationTab />
         )}
       </main>
+
       {/* Recompensa Leve de Moedas Flutuante Não-Bloqueante */}
       <FloatingMoneyReward />
       {/* Efeito Visual Rico de Moedas e Notas Voadoras */}
       <CashCelebrationBurst />
+
       {/* Modal de Encerramento do Dia Global */}
       <CloseDayModal
         isOpen={isCloseDayModalOpen}
@@ -307,8 +364,64 @@ export default function App() {
         onConfirmCloseDay={(params) => {
           setDeliveries(params.nextDayDeliveries);
           setIsCloseDayModalOpen(false);
+          setIsDailyStreetPickerOpen(false);
+          setActiveTab('resumo');
         }}
       />
+
+      {/* Seletor Diário de Ruas (Grid 3x3 do Wireframe) */}
+      <DailyStreetPickerModal
+        isOpen={
+          isDailyStreetPickerOpen &&
+          new URLSearchParams(window.location.search).get('picker') !== 'false' &&
+          !new URLSearchParams(window.location.search).get('modal')
+        }
+        savedStreets={savedStreets}
+        deliveries={deliveries}
+        onClose={() => setIsDailyStreetPickerOpen(false)}
+        onConfirmStreets={handleConfirmDailyStreets}
+        onOpenAssociacaoTab={() => setActiveTab('associacao')}
+      />
+
+      {/* Visualização para Modais de Entrega: Registro, Corrigir, Familiar e Vizinho */}
+      {Boolean(new URLSearchParams(window.location.search).get('modal')) && (
+        <DeliveryWhatsAppModal
+          isOpen={true}
+          delivery={{
+            id_entrega: 'preview_del_1',
+            codigo_pacote: '#BR987654321',
+            nome_destinatario: 'Maria Oliveira Santos',
+            endereco_rua: 'Rua Carlos Seidl',
+            numero_casa: '142',
+            complemento: 'Casa 2',
+            status:
+              new URLSearchParams(window.location.search).get('modal') === 'registro' ||
+              new URLSearchParams(window.location.search).get('modal') === 'corrigir'
+                ? 'entregue'
+                : 'aguardando_rua',
+            recebedor_tipo:
+              new URLSearchParams(window.location.search).get('modal') === 'familiar'
+                ? 'familiar'
+                : new URLSearchParams(window.location.search).get('modal') === 'vizinho'
+                ? 'vizinho'
+                : 'portaria',
+            recebedor_detalhes:
+              new URLSearchParams(window.location.search).get('modal') === 'familiar'
+                ? 'Familiar (Filho: Lucas)'
+                : new URLSearchParams(window.location.search).get('modal') === 'vizinho'
+                ? 'Vizinho Nº 144 (Dona Maria)'
+                : 'Portaria (José Carlos)',
+            data_hora: new Date().toISOString(),
+          }}
+          initialEditingReceipt={new URLSearchParams(window.location.search).get('modal') === 'corrigir'}
+          onClose={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('modal');
+            window.history.pushState({}, '', url);
+            window.location.reload();
+          }}
+        />
+      )}
     </div>
   );
 }

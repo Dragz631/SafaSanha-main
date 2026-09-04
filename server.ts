@@ -1,12 +1,9 @@
 import express from 'express';
 import path from 'path';
-import fs from 'fs';
-import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 
-// Load environment variables from .env file
-dotenv.config();
+import fs from 'fs';
 
 interface DeliveryRecord {
   id_entrega: string;
@@ -20,42 +17,37 @@ interface DeliveryRecord {
   origem_leitura?: string;
 }
 
-// Data persistence configuration (defaults to ./data/deliveries.json)
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_DIR = path.join(process.cwd(), 'data');
 const DELIVERIES_FILE = path.join(DATA_DIR, 'deliveries.json');
 
-function loadDeliveries(): DeliveryRecord[] {
-  try {
-    if (fs.existsSync(DELIVERIES_FILE)) {
-      const content = fs.readFileSync(DELIVERIES_FILE, 'utf-8');
-      const parsed = JSON.parse(content);
-      if (Array.isArray(parsed)) {
-        console.log(`Carregadas ${parsed.length} entregas persistidas de ${DELIVERIES_FILE}`);
-        return parsed;
-      }
-    }
-  } catch (err) {
-    console.warn('Aviso: Não foi possível ler o arquivo de entregas salvas:', err);
-  }
-  return [];
-}
-
-function saveDeliveries(deliveries: DeliveryRecord[]): void {
-  // Evita escritas em disco síncronas que acionam o file-watcher em modo dev
-  if (process.env.NODE_ENV !== 'production' && !process.env.PERSIST_DISK) {
-    return;
-  }
+function loadPersistedDeliveries(): DeliveryRecord[] {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    fs.writeFileSync(DELIVERIES_FILE, JSON.stringify(deliveries, null, 2), 'utf-8');
+    if (fs.existsSync(DELIVERIES_FILE)) {
+      const raw = fs.readFileSync(DELIVERIES_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    }
   } catch (err) {
-    console.warn('Aviso: Falha ao persistir entregas no disco:', err);
+    console.warn('Aviso: Falha ao ler entregas salvas em disco:', err);
+  }
+  return [];
+}
+
+function savePersistedDeliveries(data: DeliveryRecord[]): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(DELIVERIES_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Aviso: Falha ao salvar entregas em disco:', err);
   }
 }
 
-const deliveriesStore: DeliveryRecord[] = loadDeliveries();
+const deliveriesStore: DeliveryRecord[] = loadPersistedDeliveries();
 
 // Lazy initialization of Gemini API
 let genAI: GoogleGenAI | null = null;
@@ -75,12 +67,7 @@ async function startServer() {
 
   // API Routes
   app.get('/api/health', (_req, res) => {
-    res.json({
-      status: 'ok',
-      service: 'SafaSanha - LogiScan',
-      time: new Date().toISOString(),
-      deliveriesCount: deliveriesStore.length,
-    });
+    res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
   // Get all registered deliveries
@@ -102,7 +89,7 @@ async function startServer() {
     } else {
       deliveriesStore.unshift(delivery);
     }
-    saveDeliveries(deliveriesStore);
+    savePersistedDeliveries(deliveriesStore);
     res.json({ success: true, delivery });
   });
 
@@ -112,7 +99,7 @@ async function startServer() {
     const index = deliveriesStore.findIndex(d => d.id_entrega === id);
     if (index >= 0) {
       deliveriesStore.splice(index, 1);
-      saveDeliveries(deliveriesStore);
+      savePersistedDeliveries(deliveriesStore);
       res.json({ success: true, message: 'Entrega removida com sucesso' });
     } else {
       res.status(404).json({ error: 'Entrega não encontrada' });
@@ -259,12 +246,25 @@ Não invente dados. Se não localizar algum campo, deixe como string vazia "".`,
   });
 
   // Vite middleware setup for dev / static in production
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    (!process.env.VITE_DEV && fs.existsSync(path.join(process.cwd(), 'dist', 'index.html')));
+
+  if (!isProduction) {
+    try {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.warn('Vite dev middleware falhou, caindo para static dist:', viteErr);
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*', (_req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    }
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
@@ -274,34 +274,15 @@ Não invente dados. Se não localizar algum campo, deixe como string vazia "".`,
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server SafaSanha (LogiScan) rodando em http://localhost:${PORT}`);
+    console.log(`Server SafaSanha rodando em http://localhost:${PORT}`);
   });
 
-  server.on('error', (err: any) => {
-    if (err.code === 'EADDRINUSE') {
-      console.warn(`Aviso: A porta ${PORT} está em uso. Tentando a porta ${PORT + 1}...`);
-      const fallbackServer = app.listen(PORT + 1, '0.0.0.0', () => {
-        console.log(`Server SafaSanha (LogiScan) rodando em http://localhost:${PORT + 1}`);
-      });
-      fallbackServer.on('error', (e: any) => {
-        console.error('Erro ao iniciar servidor na porta secundária:', e);
-      });
-    } else {
-      console.error('Erro no servidor:', err);
-    }
+  process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception capturada no servidor:', err);
   });
-
-  const shutdown = () => {
-    console.log('Encerrando servidor SafaSanha...');
-    server.close(() => {
-      console.log('Servidor encerrado.');
-      process.exit(0);
-    });
-  };
-
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection capturada no servidor:', reason);
+  });
 }
 
 startServer();
-

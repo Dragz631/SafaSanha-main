@@ -1,15 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import {
-  Building,
-  Home,
-  MapPin,
+  Compass,
   Plus,
   Check,
   UserPlus,
   Trash2,
   Search,
-  Compass,
-  Layers,
 } from 'lucide-react';
 import { DeliveryData } from '../types';
 import {
@@ -41,6 +37,7 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
 }) => {
   const [searchFilter, setSearchFilter] = useState<string>('');
   const [refreshKey, setRefreshKey] = useState<number>(0);
+  const [statusFilter, setStatusFilter] = useState<'todas' | 'na_rota' | 'pendentes'>('todas');
 
   // Estados exclusivos para a Manilha
   const [manilhaCategory, setManilhaCategory] = useState<'todas' | 'principais' | 'letras'>('todas');
@@ -131,6 +128,31 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
     });
   };
 
+  // Contadores globais de rota para os chips rápidos de filtro
+  const { totalInRoute, totalPending } = useMemo(() => {
+    let inRoute = 0;
+    let pending = 0;
+    allSavedHouses.forEach((h) => {
+      h.residents.forEach((r) => {
+        if (isResidentInRoute(h, r)) inRoute++;
+        else pending++;
+      });
+    });
+    return { totalInRoute: inRoute, totalPending: pending };
+  }, [allSavedHouses, currentDeliveries, isManilhaActive]);
+
+  // Aplica o filtro de status (todas, na_rota, pendentes)
+  const displayedHouses = useMemo(() => {
+    if (statusFilter === 'todas') return filteredHouses;
+    return filteredHouses.filter((h) => {
+      const someIn = h.residents.some((r) => isResidentInRoute(h, r));
+      const someOut = h.residents.some((r) => !isResidentInRoute(h, r));
+      if (statusFilter === 'na_rota') return someIn;
+      if (statusFilter === 'pendentes') return someOut;
+      return true;
+    });
+  }, [filteredHouses, statusFilter, currentDeliveries, isManilhaActive]);
+
   // Handler de 1 toque: adiciona o pacote salvo diretamente na rota de hoje
   const handleAddSingleSaved = (house: SavedAddressNumber, resident: SavedResident) => {
     const code = `#${Math.floor(1000 + Math.random() * 9000)}`;
@@ -173,33 +195,33 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
 
   const handleDeleteRes = (house: SavedAddressNumber, residentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm('Remover este morador da memória?')) {
+    if (window.confirm('Remover este morador da memória desta casa?')) {
       deleteSavedResident(targetStreetKey, house.houseNumber, residentId, house.subStreet);
       setRefreshKey((k) => k + 1);
     }
   };
 
   return (
-    <div className="space-y-2.5">
-      {/* SE FOR MANILHA: DIVISÃO ESPECIALIZADA ENTRE AS RUAS DO MEIO/LADOS E RUAS COM LETRAS */}
+    <div className="space-y-3">
+      {/* SE FOR MANILHA: DIVISÃO ENTRE VIAS PRINCIPAIS E RUAS COM LETRAS */}
       {isManilhaActive && (
-        <div className="space-y-1.5 bg-black/30 p-2 rounded-xl border border-white/10">
+        <div className="space-y-2 bg-slate-100/90 dark:bg-slate-900/90 p-2.5 rounded-2xl border border-slate-200 dark:border-slate-800">
           {/* Nível 1: Abas Principais da Manilha */}
-          <div className="flex items-center gap-1">
+          <div className="grid grid-cols-3 gap-1 p-1 bg-white dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-2xs">
             <button
               type="button"
               onClick={() => {
                 setManilhaCategory('todas');
                 setSelectedSubStreet('todas');
               }}
-              className={`flex-1 py-1 px-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1 ${
+              className={`h-8 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1 touch-manipulation ${
                 manilhaCategory === 'todas'
-                  ? 'bg-amber-400 text-slate-950 shadow-xs'
-                  : 'bg-white/10 hover:bg-white/20 text-white'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Compass className="w-3 h-3" />
-              <span>Todas Manilha ({allSavedHouses.length})</span>
+              <Compass className="w-3.5 h-3.5" />
+              <span>Todas ({allSavedHouses.length})</span>
             </button>
 
             <button
@@ -208,13 +230,13 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
                 setManilhaCategory('principais');
                 setSelectedSubStreet('todas');
               }}
-              className={`flex-1 py-1 px-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1 ${
+              className={`h-8 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1 touch-manipulation ${
                 manilhaCategory === 'principais'
-                  ? 'bg-amber-400 text-slate-950 shadow-xs'
-                  : 'bg-white/10 hover:bg-white/20 text-white'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <span>📍 Meio & Lados</span>
+              <span>Meio & Lados</span>
             </button>
 
             <button
@@ -223,26 +245,26 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
                 setManilhaCategory('letras');
                 setSelectedSubStreet('todas');
               }}
-              className={`flex-1 py-1 px-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1 ${
+              className={`h-8 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1 touch-manipulation ${
                 manilhaCategory === 'letras'
-                  ? 'bg-amber-400 text-slate-950 shadow-xs'
-                  : 'bg-white/10 hover:bg-white/20 text-white'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <span>🔤 Letras (A a K)</span>
+              <span>Letras (A a K)</span>
             </button>
           </div>
 
           {/* Nível 2: Seletor Específico de Ruas / Letras da Manilha */}
           {manilhaCategory === 'principais' && (
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
               <button
                 type="button"
                 onClick={() => setSelectedSubStreet('todas')}
-                className={`px-2 py-0.5 rounded-md text-[10px] font-black shrink-0 transition-all cursor-pointer ${
+                className={`h-7 px-2.5 rounded-lg text-xs font-bold shrink-0 transition-all cursor-pointer ${
                   selectedSubStreet === 'todas'
-                    ? 'bg-white text-slate-950 font-black'
-                    : 'bg-white/15 text-white hover:bg-white/25'
+                    ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                 }`}
               >
                 Todas Principais
@@ -254,14 +276,14 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
                     key={st.id}
                     type="button"
                     onClick={() => setSelectedSubStreet(st.name)}
-                    className={`px-2 py-0.5 rounded-md text-[10px] font-black shrink-0 transition-all cursor-pointer flex items-center gap-1 ${
+                    className={`h-7 px-2.5 rounded-lg text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1.5 ${
                       selectedSubStreet === st.name
-                        ? 'bg-white text-slate-950 font-black'
-                        : 'bg-white/15 text-white hover:bg-white/25'
+                        ? 'bg-emerald-600 text-white font-black shadow-xs'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                     }`}
                   >
                     <span>{st.shortLabel}</span>
-                    <span className="text-[9px] bg-black/20 px-1 py-0.2 rounded-sm opacity-80">
+                    <span className="text-[10px] px-1 rounded-sm bg-slate-100 dark:bg-slate-900/60 font-mono">
                       {count}
                     </span>
                   </button>
@@ -271,14 +293,14 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
           )}
 
           {manilhaCategory === 'letras' && (
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
               <button
                 type="button"
                 onClick={() => setSelectedSubStreet('todas')}
-                className={`px-2 py-0.5 rounded-md text-[10px] font-black shrink-0 transition-all cursor-pointer ${
+                className={`h-8 px-2.5 rounded-lg text-xs font-bold shrink-0 transition-all cursor-pointer ${
                   selectedSubStreet === 'todas'
-                    ? 'bg-white text-slate-950 font-black'
-                    : 'bg-white/15 text-white hover:bg-white/25'
+                    ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                 }`}
               >
                 Todas Letras
@@ -291,16 +313,16 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
                     key={st.id}
                     type="button"
                     onClick={() => setSelectedSubStreet(st.name)}
-                    className={`w-6 h-6 rounded-md text-[11px] font-black shrink-0 transition-all cursor-pointer flex items-center justify-center relative ${
+                    className={`w-8 h-8 rounded-lg text-xs font-black shrink-0 transition-all cursor-pointer flex items-center justify-center relative ${
                       selectedSubStreet === st.name
-                        ? 'bg-white text-slate-950 font-black scale-105'
-                        : 'bg-white/15 text-white hover:bg-white/25'
+                        ? 'bg-emerald-600 text-white font-black scale-105 shadow-xs'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                     }`}
                     title={`${st.name} (${count} casas salvas)`}
                   >
                     {letter}
                     {count > 0 && (
-                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-400"></span>
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900"></span>
                     )}
                   </button>
                 );
@@ -310,149 +332,277 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
         </div>
       )}
 
-      {/* Barra de Busca de Casas/Moradores Memorizados */}
-      {allSavedHouses.length > 3 && (
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 text-white/60 absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            placeholder={
-              isManilhaActive
-                ? 'Buscar por Rua/Letra, número ou morador da Manilha...'
-                : 'Filtrar por número ou morador salvo...'
-            }
-            className="w-full pl-8 pr-3 py-1.5 bg-black/25 text-white placeholder-white/50 rounded-xl text-xs font-bold focus:outline-none focus:bg-black/35 border border-white/10"
-          />
-        </div>
-      )}
+      {/* Barra de Filtros e Busca Rápida */}
+      <div className="space-y-2">
+        {allSavedHouses.length > 0 && (
+          <div className="flex items-center justify-between gap-2">
+            {/* Chips de Filtro: Todas, Na Rota, Pendentes */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('todas')}
+                className={`text-xs font-black px-3 py-1.5 rounded-xl border transition-all cursor-pointer touch-manipulation active:scale-95 shrink-0 ${
+                  statusFilter === 'todas'
+                    ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                Todas ({allSavedHouses.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStatusFilter('na_rota')}
+                className={`text-xs font-black px-3 py-1.5 rounded-xl border transition-all cursor-pointer touch-manipulation active:scale-95 shrink-0 flex items-center gap-1 ${
+                  statusFilter === 'na_rota'
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/60'
+                }`}
+              >
+                <Check className="w-3 h-3 stroke-[3]" />
+                <span>Na Rota ({totalInRoute})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStatusFilter('pendentes')}
+                className={`text-xs font-black px-3 py-1.5 rounded-xl border transition-all cursor-pointer touch-manipulation active:scale-95 shrink-0 ${
+                  statusFilter === 'pendentes'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                + Pendentes ({totalPending})
+              </button>
+            </div>
+
+            {/* Contador / Dica rápida */}
+            <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 hidden xs:inline shrink-0">
+              1 toque = rota
+            </span>
+          </div>
+        )}
+
+        {/* Busca de Casas/Moradores Memorizados */}
+        {allSavedHouses.length > 2 && (
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+              placeholder={
+                isManilhaActive
+                  ? 'Buscar por número, morador ou via...'
+                  : 'Buscar número ou morador salvo...'
+              }
+              className="w-full h-10 pl-10 pr-3 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 rounded-xl text-xs font-bold focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 border border-slate-200 dark:border-slate-800 shadow-2xs transition-all"
+            />
+          </div>
+        )}
+      </div>
 
       {/* Lista Vazia */}
-      {filteredHouses.length === 0 && (
-        <div className="bg-white/10 dark:bg-slate-900/60 rounded-xl p-3 text-center space-y-2 border border-white/10">
-          <div className="w-8 h-8 rounded-full bg-amber-400/20 text-amber-300 flex items-center justify-center mx-auto text-sm">
-            💡
+      {displayedHouses.length === 0 && (
+        <div className="bg-white dark:bg-slate-900/80 rounded-2xl p-6 text-center space-y-3 border border-slate-200 dark:border-slate-800 shadow-2xs">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto text-xl border border-amber-200/80 dark:border-amber-800/60 shadow-2xs">
+            ⚡
           </div>
-          <p className="text-xs font-bold text-white">
-            {isManilhaActive && selectedSubStreet !== 'todas'
-              ? `Nenhum número memorizado na ${selectedSubStreet} ainda.`
-              : 'Nenhum número memorizado nesta área ainda.'}
-          </p>
-          <p className="text-[11px] text-white/70">
-            Digite o número e morador na aba <b>"✍️ Digitar Novo"</b>. Ele será gravado para sempre!
-          </p>
-          <button
-            type="button"
-            onClick={() => onSelectForManualAdd('', '', selectedSubStreet !== 'todas' ? selectedSubStreet : undefined)}
-            className="mt-1 px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-xl cursor-pointer shadow-xs"
-          >
-            ✍️ Cadastrar Primeiro Número {selectedSubStreet !== 'todas' ? `na ${selectedSubStreet}` : ''}
-          </button>
+          <div>
+            <h4 className="text-sm font-black text-slate-900 dark:text-white">
+              {statusFilter === 'na_rota'
+                ? 'Nenhuma casa desta rua foi adicionada na rota de hoje ainda.'
+                : statusFilter === 'pendentes'
+                ? 'Todos os moradores salvos já estão na rota de hoje!'
+                : isManilhaActive && selectedSubStreet !== 'todas'
+                ? `Nenhuma casa salva na ${selectedSubStreet} ainda.`
+                : 'Nenhuma casa memorizada nesta rua ainda.'}
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto mt-1 leading-relaxed">
+              Ao cadastrar novos pacotes pela aba <b>"✍️ Digitar Novo"</b>, o endereço e moradores ficam salvos para adicionar com 1 toque!
+            </p>
+          </div>
+          {statusFilter === 'todas' && (
+            <button
+              type="button"
+              onClick={() => onSelectForManualAdd('', '', selectedSubStreet !== 'todas' ? selectedSubStreet : undefined)}
+              className="h-10 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl cursor-pointer shadow-md shadow-emerald-600/20 transition-all inline-flex items-center gap-1.5 touch-manipulation"
+            >
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>Cadastrar Primeiro Número</span>
+            </button>
+          )}
         </div>
       )}
 
-      {/* Grid de Cards dos Números e Moradores Memorizados */}
-      {filteredHouses.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[320px] overflow-y-auto pr-0.5 no-scrollbar">
-          {filteredHouses.map((house) => {
+      {/* Grid Ergonômico de Cards de Casas e Moradores (Inspirado no Modal de Ruas) */}
+      {displayedHouses.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {displayedHouses.map((house) => {
             const isVila = house.type === 'vila';
             const isApto = house.type === 'apartamento';
             const subLabel = house.subStreet || (isManilhaActive ? 'Manilha' : undefined);
 
+            // Verifica quantos moradores dessa casa estão na rota
+            const inRouteCount = house.residents.filter((r) => isResidentInRoute(house, r)).length;
+            const allInRoute = inRouteCount > 0 && inRouteCount === house.residents.length;
+            const someInRoute = inRouteCount > 0;
+
             return (
               <div
                 key={`${house.subStreet || ''}_${house.houseNumber}`}
-                className="bg-black/25 hover:bg-black/35 rounded-xl p-2.5 border border-white/10 flex flex-col justify-between gap-2 transition-all"
+                className={`rounded-2xl border transition-all p-3 sm:p-3.5 space-y-2.5 ${
+                  allInRoute
+                    ? 'border-emerald-500/60 bg-emerald-500/[0.04] dark:bg-emerald-950/20 shadow-xs'
+                    : someInRoute
+                    ? 'border-emerald-400/40 bg-white dark:bg-slate-900 shadow-xs'
+                    : 'border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs'
+                }`}
               >
-                {/* Cabeçalho do Número com a Sub-Rua / Letra (se for Manilha) */}
-                <div className="flex items-center justify-between gap-1 border-b border-white/10 pb-1.5">
-                  <div className="flex items-center gap-1.5 min-w-0">
+                {/* TOPO DO CARD: NÚMERO DA CASA BEM DESTACADO + TIPO + STATUS */}
+                <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-slate-100 dark:border-slate-800/80">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {/* Badge Destacado do Número da Residência (Estilo Placa) */}
                     <div
-                      className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${
+                      className={`h-8 px-2.5 rounded-xl font-mono font-black text-sm sm:text-base flex items-center gap-1 shrink-0 shadow-2xs border transition-all ${
                         isVila
-                          ? 'bg-amber-400 text-slate-950'
+                          ? 'bg-amber-500/15 text-amber-900 dark:text-amber-200 border-amber-400/40'
                           : isApto
-                          ? 'bg-sky-400 text-slate-950'
-                          : 'bg-emerald-400 text-slate-950'
+                          ? 'bg-sky-500/15 text-sky-900 dark:text-sky-200 border-sky-400/40'
+                          : 'bg-emerald-500/15 text-emerald-900 dark:text-emerald-200 border-emerald-400/40'
                       }`}
                     >
-                      {isVila ? <Home className="w-3.5 h-3.5" /> : isApto ? <Building className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
+                      <span className="text-[10px] font-bold opacity-60">Nº</span>
+                      <span>{house.houseNumber}</span>
                     </div>
+
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {subLabel && isManilhaActive && (
-                          <span className="text-[10px] font-black bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded-md truncate max-w-[120px]">
+                          <span className="text-[9px] font-black bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded-md truncate max-w-[110px]">
                             {subLabel}
                           </span>
                         )}
-                        <span className="font-black text-xs text-white">
-                          Nº {house.houseNumber}
+                        <span className="text-xs font-black text-slate-800 dark:text-slate-200">
+                          {isVila ? 'Vila' : isApto ? 'Prédio' : 'Casa'}
                         </span>
-                        <span className="text-[10px] text-white/70 font-bold">
-                          {isVila ? 'Vila' : isApto ? 'Prédio' : 'Casa'} ({house.residents.length})
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
+                          • {house.residents.length} {house.residents.length === 1 ? 'morador' : 'moradores'}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Botão para Adicionar Outro Morador a Este Mesmo Número */}
-                  <button
-                    type="button"
-                    onClick={() => onSelectForManualAdd(house.houseNumber, '', house.subStreet)}
-                    className="px-1.5 py-0.5 bg-white/15 hover:bg-white/30 text-amber-200 text-[10px] font-black rounded-md flex items-center gap-1 cursor-pointer transition-all shrink-0"
-                    title={`Adicionar novo morador no Nº ${house.houseNumber}`}
-                  >
-                    <UserPlus className="w-3 h-3" />
-                    <span>+ Morador</span>
-                  </button>
+                  {/* Ações da Casa: Status da Rota e + Morador */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {someInRoute && (
+                      <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300/60 dark:border-emerald-800/80">
+                        {inRouteCount}/{house.residents.length} rota
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => onSelectForManualAdd(house.houseNumber, '', house.subStreet)}
+                      className="h-7 w-7 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center transition-all cursor-pointer touch-manipulation active:scale-95 border border-slate-200 dark:border-slate-700"
+                      title={`Cadastrar novo morador no Nº ${house.houseNumber}`}
+                      aria-label="Adicionar morador"
+                    >
+                      <UserPlus className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    </button>
+                  </div>
                 </div>
 
-                {/* Lista de Moradores Cadastrados com Botão de 1 Toque para Entrar na Rota */}
-                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {/* LISTA DE MORADORES: BOTÕES GRANDES PARA O POLEGAR (INSPIRADOS NO MODAL DE RUAS) */}
+                <div className="space-y-1.5">
                   {house.residents.map((res) => {
                     const inRoute = isResidentInRoute(house, res);
 
                     return (
-                      <div key={res.id} className="flex items-center gap-0.5">
+                      <div
+                        key={res.id}
+                        className="flex items-center gap-1.5"
+                      >
+                        {/* Botão Principal do Morador: Área de Toque Generosa (min 50px) */}
                         <button
                           type="button"
                           onClick={() => handleAddSingleSaved(house, res)}
-                          className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95 ${
+                          className={`flex-1 min-h-[50px] p-2.5 sm:px-3 rounded-xl border text-left flex items-center justify-between gap-2.5 transition-all cursor-pointer touch-manipulation select-none active:scale-[0.98] ${
                             inRoute
-                              ? 'bg-emerald-500 text-white border border-emerald-300/40 font-black'
-                              : 'bg-white text-slate-900 hover:bg-amber-300 hover:text-slate-950'
+                              ? 'border-emerald-500 bg-emerald-500/10 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 ring-2 ring-emerald-500/30 shadow-xs'
+                              : 'border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/40 hover:bg-slate-100/90 dark:hover:bg-slate-900 text-slate-800 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700 shadow-2xs'
                           }`}
                           title={
                             inRoute
-                              ? 'Já adicionado na rota de hoje! Clique para adicionar outro pacote.'
-                              : 'Clique para adicionar este pacote à rota de hoje!'
+                              ? 'Já adicionado na rota de hoje! Toque para adicionar outro pacote.'
+                              : 'Toque para adicionar este morador à rota de hoje!'
                           }
                         >
-                          {inRoute ? (
-                            <Check className="w-3.5 h-3.5 text-white stroke-[3]" />
-                          ) : (
-                            <Plus className="w-3.5 h-3.5 text-amber-600" />
-                          )}
-                          <span>
-                            {res.complement ? `${res.complement}: ` : ''}
-                            {res.name}
-                          </span>
-                          {inRoute && (
-                            <span className="text-[9px] bg-emerald-700/80 px-1 py-0.2 rounded-md uppercase tracking-wider font-bold">
-                              Na Rota
-                            </span>
-                          )}
+                          {/* Lado Esquerdo: Ícone / Indicador de Seleção + Nome do Morador */}
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {/* Indicador Circular Estilo Modal de Ruas */}
+                            <div
+                              className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all ${
+                                inRoute
+                                  ? 'bg-emerald-500 text-white shadow-xs ring-2 ring-emerald-500/20'
+                                  : 'border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-400 dark:text-slate-500'
+                              }`}
+                            >
+                              {inRoute ? (
+                                <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              ) : (
+                                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                              )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <span
+                                className={`font-black text-xs sm:text-sm block truncate leading-tight ${
+                                  inRoute
+                                    ? 'text-emerald-950 dark:text-emerald-200'
+                                    : 'text-slate-900 dark:text-white'
+                                }`}
+                              >
+                                {res.name}
+                              </span>
+                              {res.complement && (
+                                <span
+                                  className={`text-[11px] block truncate font-semibold mt-0.5 ${
+                                    inRoute
+                                      ? 'text-emerald-800/80 dark:text-emerald-400'
+                                      : 'text-slate-500 dark:text-slate-400'
+                                  }`}
+                                >
+                                  {res.complement}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Lado Direito: Badge Visual Claro do Estado */}
+                          <div className="shrink-0">
+                            {inRoute ? (
+                              <span className="text-[10px] font-black bg-emerald-600 text-white dark:bg-emerald-500 dark:text-slate-950 px-2.5 py-1 rounded-lg shadow-2xs flex items-center gap-1">
+                                <Check className="w-3 h-3 stroke-[3]" />
+                                <span>Na Rota</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/60 px-2 py-1 rounded-lg">
+                                + Rota
+                              </span>
+                            )}
+                          </div>
                         </button>
 
-                        {/* Excluir Morador da Memória */}
+                        {/* Botão de Excluir Morador da Memória (Discreto e Seguro) */}
                         <button
                           type="button"
                           onClick={(e) => handleDeleteRes(house, res.id, e)}
-                          className="p-1 text-white/40 hover:text-rose-400 hover:bg-white/10 rounded-md transition-colors cursor-pointer"
-                          title="Remover morador da memória"
+                          className="w-8 h-[50px] flex items-center justify-center text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer shrink-0 touch-manipulation active:scale-95"
+                          title="Remover morador da memória desta casa"
+                          aria-label="Remover morador"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     );
@@ -466,3 +616,4 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
     </div>
   );
 };
+

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
-  Share2,
   Copy,
   Check,
   Clock,
@@ -18,7 +17,7 @@ import {
   ShieldCheck,
   Inbox,
   UserCheck,
-  Bookmark
+  FileText
 } from 'lucide-react';
 import { DeliveryData } from '../types';
 import { saveAddressToMemory } from '../utils/addressMemoryStorage';
@@ -26,7 +25,6 @@ import { triggerCoinBurst } from '../utils/rewardEffect';
 import {
   buildWhatsAppMessage,
   buildInsucessoWhatsAppMessage,
-  shareOrOpenWhatsApp,
   copyTextToClipboard,
   getFormattedCurrentTime,
   getFormattedCurrentDate
@@ -34,14 +32,18 @@ import {
 import {
   getDoormenForAddress,
   saveDoormanForAddress,
-  removeDoormanForAddress,
-  cleanDoormanName
+  cleanDoormanName,
+  getFamilyForAddress,
+  saveFamilyForAddress,
+  getNeighborsForAddress,
+  saveNeighborForAddress,
 } from '../utils/doormanStorage';
 
 interface DeliveryWhatsAppModalProps {
   isOpen?: boolean;
   delivery: DeliveryData | null;
   initialMode?: 'entrega' | 'insucesso';
+  initialEditingReceipt?: boolean;
   onClose: () => void;
   onConfirmDelivered?: () => void;
   onConfirmDelivery?: (updated: DeliveryData) => void;
@@ -67,16 +69,48 @@ const INSUCESSO_REASONS = [
   'Outro motivo',
 ];
 
+export const FAMILY_RELATIONS = [
+  'Filho',
+  'Filha',
+  'Mãe',
+  'Pai',
+  'Esposa',
+  'Marido',
+  'Irmão',
+  'Irmã',
+  'Avô',
+  'Avó',
+  'Tio(a)',
+  'Sobrinho(a)',
+];
+
+export const NEIGHBOR_LOCATION_PRESETS = [
+  'Casa ao lado',
+  'Casa da frente',
+  'Fundos',
+  'Vila ao lado',
+];
+
 export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
   isOpen = true,
   delivery,
   initialMode = 'entrega',
+  initialEditingReceipt = false,
   onClose,
   onConfirmDelivered,
   onConfirmDelivery,
+  onSaveDelivery,
 }) => {
   const [mode, setMode] = useState<'entrega' | 'insucesso'>(initialMode);
   
+  // Verifica se o pacote já foi entregue anteriormente
+  const isAlreadyDelivered = Boolean(
+    delivery && (delivery.status === 'entregue' || delivery.status === 'concluido')
+  );
+
+  // Modo de edição caso o entregador queira corrigir dados de uma entrega já feita
+  const [isEditingReceipt, setIsEditingReceipt] = useState(initialEditingReceipt);
+
   // Dados da Entrega
   const [clientName, setClientName] = useState('');
   const [streetName, setStreetName] = useState('');
@@ -90,14 +124,21 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
   const [receiverType, setReceiverType] = useState<string>('proprio_morador');
   const [receiverCustomText, setReceiverCustomText] = useState<string>('');
 
+  // Familiar
+  const [familyRelation, setFamilyRelation] = useState<string>('');
+  const [familyName, setFamilyName] = useState<string>('');
+
+  // Vizinho
+  const [neighborNumber, setNeighborNumber] = useState<string>('');
+  const [neighborName, setNeighborName] = useState<string>('');
+
   // Insucesso
   const [selectedReason, setSelectedReason] = useState<string>(INSUCESSO_REASONS[0]);
   const [customReasonText, setCustomReasonText] = useState<string>('');
 
   const [copied, setCopied] = useState(false);
-  const [isEditingData, setIsEditingData] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
-  const [doormenVersion, setDoormenVersion] = useState<number>(0);
+  const [isEditingData, setIsEditingData] = useState(false);
 
   useEffect(() => {
     if (delivery) {
@@ -112,9 +153,9 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
           ? delivery.codigo_pacote
           : `#${delivery.codigo_pacote}`
       );
-      // Se estiver entregando agora, usa o horário atual real do momento da entrega
-      const isAlreadyDelivered = delivery.status === 'entregue' || delivery.status === 'concluido';
-      const effectiveDate = isAlreadyDelivered && delivery.data_hora ? delivery.data_hora : new Date();
+      
+      const alreadyDone = delivery.status === 'entregue' || delivery.status === 'concluido';
+      const effectiveDate = alreadyDone && delivery.data_hora ? delivery.data_hora : new Date();
       
       setDeliveryTime(getFormattedCurrentTime(effectiveDate));
       setDeliveryDate(getFormattedCurrentDate(effectiveDate));
@@ -129,51 +170,126 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
         if (delivery.recebedor_tipo) {
           setReceiverType(delivery.recebedor_tipo);
         }
+        if (delivery.recebedor_detalhes) {
+          setReceiverCustomText(delivery.recebedor_detalhes);
+
+          if (delivery.recebedor_tipo === 'familiar') {
+            const famMatch = delivery.recebedor_detalhes.match(/^Familiar\s*\((.*?)\)$/i);
+            const inner = famMatch ? famMatch[1].trim() : delivery.recebedor_detalhes;
+            const parts = inner.split(/[:\-]/);
+            if (parts.length > 1) {
+              setFamilyRelation(parts[0].trim());
+              setFamilyName(parts.slice(1).join('-').trim().replace(/^\((.*?)\)$/, '$1'));
+            } else if (FAMILY_RELATIONS.some((r) => r.toLowerCase() === inner.toLowerCase())) {
+              setFamilyRelation(inner);
+              setFamilyName('');
+            } else {
+              setFamilyName(inner);
+            }
+          }
+
+          if (delivery.recebedor_tipo === 'vizinho') {
+            const vizMatch = delivery.recebedor_detalhes.match(/^Vizinho\s*\((.*?)\)$/i);
+            const inner = vizMatch ? vizMatch[1].trim() : delivery.recebedor_detalhes;
+            const parenMatch = inner.match(/^(.*?)\s*\((.*?)\)$/);
+            if (parenMatch) {
+              setNeighborNumber(parenMatch[1].replace(/^Nº\s*/i, '').trim());
+              setNeighborName(parenMatch[2].trim());
+            } else if (/^\d+/.test(inner) || inner.toLowerCase().startsWith('nº') || inner.toLowerCase().startsWith('casa')) {
+              setNeighborNumber(inner.replace(/^Nº\s*/i, '').trim());
+              setNeighborName('');
+            } else {
+              setNeighborName(inner);
+            }
+          }
+        }
       }
 
       setCopied(false);
+      setIsEditingReceipt(initialEditingReceipt || false);
       setIsEditingData(false);
       setShareFeedback(null);
     }
-  }, [delivery, initialMode]);
+  }, [delivery, initialMode, initialEditingReceipt]);
 
   // Porteiros cadastrados na memória para este endereço/número
   const savedDoormen = useMemo(() => {
     if (!houseNumber) return [];
     return getDoormenForAddress(streetName, houseNumber);
-  }, [streetName, houseNumber, doormenVersion]);
+  }, [streetName, houseNumber]);
+
+  // Familiares salvos na memória para este endereço/número
+  const savedFamily = useMemo(() => {
+    if (!houseNumber) return [];
+    return getFamilyForAddress(streetName, houseNumber);
+  }, [streetName, houseNumber]);
+
+  // Vizinhos salvos na memória para este endereço/número
+  const savedNeighbors = useMemo(() => {
+    if (!houseNumber) return [];
+    return getNeighborsForAddress(streetName, houseNumber);
+  }, [streetName, houseNumber]);
 
   // Calcula o nome final do recebedor dinamicamente
   const computedReceiver = useMemo(() => {
     if (receiverType === 'proprio_morador') return 'Próprio Morador';
+    
     if (receiverType === 'vizinho') {
+      const numPart = neighborNumber.trim();
+      const namePart = neighborName.trim();
+      if (numPart || namePart) {
+        let detail = '';
+        if (numPart && namePart) {
+          detail = /^\d+/.test(numPart) ? `Nº ${numPart} (${namePart})` : `${numPart} (${namePart})`;
+        } else if (numPart) {
+          detail = /^\d+/.test(numPart) ? `Nº ${numPart}` : numPart;
+        } else {
+          detail = namePart;
+        }
+        return `Vizinho (${detail})`;
+      }
       return receiverCustomText.trim()
         ? `Vizinho (${receiverCustomText.trim()})`
         : 'Vizinho';
     }
+
     if (receiverType === 'terceiros') {
       return receiverCustomText.trim()
         ? `Terceiros (${receiverCustomText.trim()})`
         : 'Terceiros';
     }
+
     if (receiverType === 'familiar') {
+      const rel = familyRelation.trim();
+      const nm = familyName.trim();
+      if (rel || nm) {
+        const detail = rel
+          ? nm
+            ? `${rel}: ${nm}`
+            : rel
+          : nm;
+        return `Familiar (${detail})`;
+      }
       return receiverCustomText.trim()
         ? `Familiar (${receiverCustomText.trim()})`
         : 'Familiar / Parente';
     }
+
     if (receiverType === 'portaria') {
       const clean = cleanDoormanName(receiverCustomText);
       return clean
         ? `Portaria (${clean})`
         : 'Portaria / Zelador';
     }
+
     if (receiverType === 'local_seguro') {
       return receiverCustomText.trim()
         ? `Local Seguro (${receiverCustomText.trim()})`
         : 'Local seguro (Grade/Portão)';
     }
+
     return receiverCustomText.trim() || 'Outro Recebedor';
-  }, [receiverType, receiverCustomText]);
+  }, [receiverType, receiverCustomText, familyRelation, familyName, neighborNumber, neighborName]);
 
   const computedReason = useMemo(() => {
     if (selectedReason === 'Outro motivo') {
@@ -196,7 +312,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
           codigo_pacote: packageCode,
         },
         {
-          customReceiver: computedReceiver,
+          customReceiver: isAlreadyDelivered && !isEditingReceipt && delivery.recebedor_detalhes ? delivery.recebedor_detalhes : computedReceiver,
           customDate: deliveryDate,
           customTime: deliveryTime,
         }
@@ -230,14 +346,36 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
     computedReason,
     deliveryDate,
     deliveryTime,
+    isAlreadyDelivered,
+    isEditingReceipt,
   ]);
 
   const saveUpdatedDelivery = (newStatus: 'entregue' | 'insucesso') => {
     if (!delivery) return;
 
-    // Se for portaria e tiver digitado/selecionado nome de porteiro, salva na memória associado ao número!
-    if (mode === 'entrega' && receiverType === 'portaria' && receiverCustomText.trim()) {
-      saveDoormanForAddress(streetName, houseNumber, receiverCustomText.trim());
+    // Salva na memória do endereço de acordo com o tipo de recebedor
+    if (mode === 'entrega') {
+      if (receiverType === 'portaria' && receiverCustomText.trim()) {
+        saveDoormanForAddress(streetName, houseNumber, receiverCustomText.trim());
+      } else if (receiverType === 'familiar') {
+        const famText = familyRelation
+          ? familyName.trim()
+            ? `${familyRelation} (${familyName.trim()})`
+            : familyRelation
+          : familyName.trim() || receiverCustomText.trim();
+        if (famText) {
+          saveFamilyForAddress(streetName, houseNumber, famText);
+        }
+      } else if (receiverType === 'vizinho') {
+        const numPart = neighborNumber.trim();
+        const namePart = neighborName.trim();
+        const vizText = numPart && namePart
+          ? (/^\d+/.test(numPart) ? `Nº ${numPart} (${namePart})` : `${numPart} (${namePart})`)
+          : (numPart ? (/^\d+/.test(numPart) ? `Nº ${numPart}` : numPart) : namePart || receiverCustomText.trim());
+        if (vizText) {
+          saveNeighborForAddress(streetName, houseNumber, vizText);
+        }
+      }
     }
 
     const updated: DeliveryData = {
@@ -252,10 +390,10 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
       codigo_pacote: packageCode,
       status: newStatus,
       motivo_insucesso: newStatus === 'insucesso' ? computedReason : undefined,
-      data_hora: new Date().toISOString(),
+      data_hora: delivery.data_hora || new Date().toISOString(),
     };
 
-    // Salva imediatamente na memória da rua
+    // Salva na memória de endereços rápidos
     try {
       saveAddressToMemory(streetName, houseNumber, complement, clientName);
     } catch (_err) {
@@ -265,57 +403,77 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
     if (onConfirmDelivery) {
       onConfirmDelivery(updated);
     }
-    if ((onSaveDelivery as any)) {
-      (onSaveDelivery as any)(updated);
+    if (onSaveDelivery) {
+      onSaveDelivery(updated);
     }
     if (onConfirmDelivered) {
       onConfirmDelivered();
     }
   };
 
-  const handleShareAndConfirm = async (e?: React.MouseEvent) => {
+  /**
+   * Copiar Texto e Concluir Entrega (1 toque rápido)
+   * Se for uma nova entrega bem-sucedida, concede +2 moedas de ouro!
+   * Se já estiver entregue, NUNCA duplica moedas.
+   */
+  const handleCopyAndComplete = async (e?: React.MouseEvent) => {
     const targetStatus = mode === 'entrega' ? 'entregue' : 'insucesso';
-    if (targetStatus === 'entregue') {
+
+    // 1. Copia o texto para a área de transferência do celular
+    await copyTextToClipboard(currentMessage);
+    setCopied(true);
+
+    // 2. Concede +2 moedas de ouro APENAS se for uma nova entrega concluída
+    if (targetStatus === 'entregue' && !isAlreadyDelivered) {
       try {
-        triggerCoinBurst(1, clientName, e || null);
+        triggerCoinBurst(2, clientName, e || null);
       } catch (_err) {}
     }
-    
-    // Dispara compartilhamento no celular
-    const res = await shareOrOpenWhatsApp(currentMessage);
-    
-    if (res.method === 'share') {
-      setShareFeedback('Abrindo WhatsApp...');
-    } else if (res.method === 'whatsapp') {
-      setShareFeedback('Abrindo WhatsApp com o texto na caixa...');
-    } else {
-      setShareFeedback('Texto copiado para a área de transferência!');
-    }
 
+    // 3. Salva a entrega com o novo status
     saveUpdatedDelivery(targetStatus);
+
+    setShareFeedback(
+      targetStatus === 'entregue'
+        ? '📋 Texto copiado e entrega concluída (+2 🪙)!'
+        : '📋 Texto copiado e insucesso registrado!'
+    );
 
     setTimeout(() => {
       onClose();
-    }, 600);
+    }, 450);
   };
 
-  const handleCopyText = async () => {
+  /**
+   * Concluir sem Copiar
+   */
+  const handleCompleteWithoutCopy = (e?: React.MouseEvent) => {
+    const targetStatus = mode === 'entrega' ? 'entregue' : 'insucesso';
+
+    // Concede moedas apenas se for nova entrega
+    if (targetStatus === 'entregue' && !isAlreadyDelivered) {
+      try {
+        triggerCoinBurst(2, clientName, e || null);
+      } catch (_err) {}
+    }
+
+    saveUpdatedDelivery(targetStatus);
+    onClose();
+  };
+
+  /**
+   * Copiar Texto do Registro (quando já entregue) - SEM MOEDAS DUPLICADAS
+   */
+  const handleCopyReceipt = async () => {
     const success = await copyTextToClipboard(currentMessage);
     if (success) {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setShareFeedback('✓ Texto da entrega copiado com sucesso!');
+      setTimeout(() => {
+        setCopied(false);
+        setShareFeedback(null);
+      }, 2500);
     }
-  };
-
-  const handleSaveWithoutOpening = (e?: React.MouseEvent) => {
-    const targetStatus = mode === 'entrega' ? 'entregue' : 'insucesso';
-    if (targetStatus === 'entregue') {
-      try {
-        triggerCoinBurst(1, clientName, e || null);
-      } catch (_err) {}
-    }
-    saveUpdatedDelivery(targetStatus);
-    onClose();
   };
 
   const activePreset = RECEIVER_PRESETS.find(p => p.id === receiverType);
@@ -323,421 +481,700 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
   if (!isOpen || !delivery) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fadeIn">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 flex flex-col max-h-[92vh] pb-safe">
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fadeIn overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border-t sm:border border-slate-200/90 dark:border-slate-800 flex flex-col max-h-[92vh] sm:max-h-[90vh] pb-safe transition-colors">
         
-        {/* Cabeçalho do Modal */}
-        <div className="bg-slate-900 text-white p-4 pb-3">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black ${
-                mode === 'entrega' ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'
-              }`}>
-                {mode === 'entrega' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
-              </div>
-              <div>
-                <h2 className="font-black text-sm text-white">
-                  {mode === 'entrega' ? 'Registrar Entrega' : 'Registrar Insucesso'}
-                </h2>
-                <p className="text-[11px] text-slate-400">
-                  {houseNumber !== 'S/N' ? `Nº ${houseNumber} • ` : ''}{streetName}
-                  {complement ? ` (${complement})` : ''}
-                </p>
-              </div>
+        {/* CABEÇALHO DO MODAL */}
+        <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 relative">
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 flex items-center justify-center transition-colors cursor-pointer touch-manipulation"
+            aria-label="Fechar"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="flex items-center gap-3 pr-10">
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black shrink-0 border shadow-xs ${
+              isAlreadyDelivered && !isEditingReceipt
+                ? 'bg-emerald-500/15 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                : isEditingReceipt
+                ? 'bg-amber-500/15 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                : mode === 'entrega'
+                ? 'bg-emerald-500/15 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                : 'bg-rose-500/15 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/30'
+            }`}>
+              {isAlreadyDelivered && !isEditingReceipt ? (
+                <FileText className="w-5 h-5 stroke-[2.5]" />
+              ) : isEditingReceipt ? (
+                <Edit2 className="w-5 h-5 stroke-[2.5]" />
+              ) : mode === 'entrega' ? (
+                <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+              ) : (
+                <AlertTriangle className="w-5 h-5 stroke-[2.5]" />
+              )}
             </div>
 
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center cursor-pointer transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="min-w-0">
+              <h2 className="font-black text-base sm:text-lg text-slate-900 dark:text-white tracking-tight truncate leading-tight">
+                {isAlreadyDelivered && !isEditingReceipt
+                  ? 'Registro da Entrega'
+                  : isEditingReceipt
+                  ? 'Corrigir Recebedor'
+                  : mode === 'entrega'
+                  ? 'Registrar Entrega'
+                  : 'Registrar Insucesso'}
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold truncate mt-0.5">
+                {houseNumber !== 'S/N' ? `Nº ${houseNumber} • ` : ''}{streetName}
+                {complement ? ` (${complement})` : ''}
+              </p>
+            </div>
           </div>
 
-          {/* Toggle Sucesso vs Insucesso */}
-          <div className="flex bg-slate-800 p-1 rounded-xl gap-1">
-            <button
-              onClick={() => setMode('entrega')}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                mode === 'entrega'
-                  ? 'bg-emerald-500 text-slate-950 shadow-xs'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Entregue com Sucesso</span>
-            </button>
-            <button
-              onClick={() => setMode('insucesso')}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                mode === 'insucesso'
-                  ? 'bg-rose-500 text-white shadow-xs'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>Insucesso (Falha)</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Corpo do Modal */}
-        <div className="p-4 space-y-3.5 overflow-y-auto flex-1">
-          
-          {/* MODO 1: ENTREGUE COM SUCESSO - SELETOR DINÂMICO DE RECEBEDOR */}
-          {mode === 'entrega' && (
-            <div className="space-y-2">
-              <label className="text-[11px] font-black text-slate-700 uppercase tracking-wider block flex items-center gap-1">
-                <Users className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Quem recebeu o pacote? *</span>
-              </label>
-
-              <div className="grid grid-cols-2 gap-2">
-                {RECEIVER_PRESETS.map((preset) => {
-                  const Icon = preset.icon;
-                  const isSelected = receiverType === preset.id;
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => {
-                        setReceiverType(preset.id);
-                        if (preset.id === 'proprio_morador') {
-                          setReceiverCustomText('');
-                        } else if (preset.id === 'portaria' && savedDoormen.length === 1 && !receiverCustomText) {
-                          // Pré-seleciona se houver apenas 1 porteiro salvo
-                          setReceiverCustomText(savedDoormen[0]);
-                        }
-                      }}
-                      className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer active:scale-95 ${
-                        isSelected
-                          ? 'bg-emerald-50 border-emerald-500 text-emerald-950 font-black shadow-xs ring-1 ring-emerald-500'
-                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700 font-bold'
-                      }`}
-                    >
-                      <div
-                        className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
-                          isSelected
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-white text-slate-500 border border-slate-200'
-                        }`}
-                      >
-                        <Icon className="w-3.5 h-3.5" />
-                      </div>
-                      <span className="text-xs leading-tight">{preset.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Seção Especial: OPÇÕES DE PORTEIROS SALVOS NO NÚMERO */}
-              {receiverType === 'portaria' && savedDoormen.length > 0 && (
-                <div className="p-3 bg-amber-50/90 border border-amber-300/80 rounded-2xl space-y-2 animate-fadeIn shadow-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black text-amber-950 flex items-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4 text-amber-600" />
-                      <span>Porteiros cadastrados no Nº {houseNumber}:</span>
-                    </span>
-                    <span className="text-[10px] font-bold text-amber-700 bg-amber-200/70 px-1.5 py-0.5 rounded-md">
-                      Memória Ativa
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5">
-                    {savedDoormen.map((doorman) => {
-                      const isChosen = cleanDoormanName(receiverCustomText).toLowerCase() === doorman.toLowerCase();
-                      return (
-                        <div
-                          key={doorman}
-                          className="inline-flex items-center bg-white rounded-xl border border-amber-200 shadow-xs overflow-hidden"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setReceiverCustomText(doorman)}
-                            className={`px-2.5 py-1.5 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
-                              isChosen
-                                ? 'bg-emerald-600 text-white font-black'
-                                : 'text-slate-800 hover:bg-amber-100/50'
-                            }`}
-                          >
-                            <span>👮‍♂️ {doorman}</span>
-                            {isChosen && <Check className="w-3.5 h-3.5" />}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeDoormanForAddress(streetName, houseNumber, doorman);
-                              if (isChosen) setReceiverCustomText('');
-                              setDoormenVersion((v) => v + 1);
-                            }}
-                            className={`p-1.5 text-slate-400 hover:text-rose-600 transition-colors border-l ${
-                              isChosen ? 'border-emerald-500 text-emerald-100 hover:text-white' : 'border-amber-100'
-                            }`}
-                            title="Remover este porteiro da memória deste número"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Detalhe adicional do recebedor */}
-              {receiverType !== 'proprio_morador' && (
-                <div className="pt-1 animate-fadeIn space-y-1">
-                  <label className="text-[10px] font-bold text-slate-600 block flex items-center justify-between">
-                    <span>
-                      {receiverType === 'portaria'
-                        ? 'Nome do Porteiro / Zelador:'
-                        : 'Identificação / Detalhe de quem recebeu:'}
-                    </span>
-                    {receiverType === 'portaria' && (
-                      <span className="text-emerald-700 font-extrabold text-[9px] flex items-center gap-0.5">
-                        <Bookmark className="w-2.5 h-2.5" />
-                        Salva automático na memória
-                      </span>
-                    )}
-                  </label>
-                  <input
-                    type="text"
-                    value={receiverCustomText}
-                    onChange={(e) => setReceiverCustomText(e.target.value)}
-                    placeholder={
-                      receiverType === 'portaria'
-                        ? 'Digite o nome do porteiro (Ex: José, Carlos)...'
-                        : activePreset?.placeholder || 'Digite o detalhe...'
-                    }
-                    className="w-full px-3 py-2.5 bg-slate-50 border-2 border-emerald-400 rounded-xl text-xs font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-600 shadow-xs"
-                    autoFocus
-                  />
-                  {receiverType === 'portaria' && receiverCustomText.trim() && (
-                    <p className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 mt-1">
-                      <Sparkles className="w-3 h-3 text-emerald-600" />
-                      <span>
-                        "{cleanDoormanName(receiverCustomText)}" ficará gravado para futuras entregas no Nº {houseNumber}.
-                      </span>
-                    </p>
-                  )}
-                </div>
-              )}
+          {/* Toggle Sucesso vs Insucesso (apenas quando registrando nova entrega) */}
+          {!isAlreadyDelivered && !isEditingReceipt && (
+            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl gap-1 mt-3">
+              <button
+                type="button"
+                onClick={() => setMode('entrega')}
+                className={`flex-1 h-9 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer touch-manipulation ${
+                  mode === 'entrega'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
+                <span>Entregue (+2 🪙)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('insucesso')}
+                className={`flex-1 h-9 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer touch-manipulation ${
+                  mode === 'insucesso'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <AlertTriangle className="w-4 h-4 stroke-[2.5]" />
+                <span>Insucesso</span>
+              </button>
             </div>
           )}
+        </div>
 
-          {/* MODO 2: INSUCESSO - SELECIONAR MOTIVO */}
-          {mode === 'insucesso' && (
-            <div className="space-y-2">
-              <label className="text-[11px] font-black text-rose-800 uppercase tracking-wider block flex items-center gap-1">
-                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                <span>Qual o motivo do insucesso? *</span>
-              </label>
+        {/* CORPO DO MODAL */}
+        {isAlreadyDelivered && !isEditingReceipt ? (
+          /* CASO 1: VISUALIZANDO REGISTRO DA ENTREGA JÁ FEITA */
+          <div className="p-4 sm:p-5 space-y-3.5 overflow-y-auto flex-1 text-xs">
+            {/* Banner de Entrega Concluída */}
+            <div className="bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/50 rounded-2xl p-4 flex items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black shadow-xs shrink-0">
+                  <Check className="w-5 h-5 stroke-[3]" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
+                    <span>Entrega Concluída</span>
+                    <span className="bg-amber-400/20 text-amber-800 dark:text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded-md border border-amber-400/30">
+                      +2 🪙 Moedas
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-emerald-800/90 dark:text-emerald-400 font-semibold mt-0.5">
+                    Registrada às {deliveryTime} ({deliveryDate})
+                  </p>
+                </div>
+              </div>
+            </div>
 
-              <div className="space-y-1.5">
-                {INSUCESSO_REASONS.map((reason) => {
-                  const isSelected = selectedReason === reason;
-                  return (
+            {/* Informações de Quem Recebeu */}
+            <div className="bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Quem Recebeu:
+                </span>
+                <span className="font-black text-xs sm:text-sm text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                  <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+                  <span>{delivery.recebedor_detalhes || computedReceiver}</span>
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-800/80 text-[11px]">
+                <span className="text-slate-500 dark:text-slate-400 font-semibold">Destinatário:</span>
+                <span className="font-extrabold text-slate-800 dark:text-slate-200">{clientName}</span>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-500 dark:text-slate-400 font-semibold">Código:</span>
+                <span className="font-mono font-black text-slate-700 dark:text-slate-300 bg-slate-200/60 dark:bg-slate-800 px-1.5 py-0.2 rounded-md">
+                  {packageCode}
+                </span>
+              </div>
+            </div>
+
+            {/* Mensagem WhatsApp Formatada */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Comprovante / WhatsApp:
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyReceipt}
+                  className={`h-7 px-2.5 rounded-lg border text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer touch-manipulation ${
+                    copied
+                      ? 'bg-emerald-600 text-white border-emerald-600 font-black'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {copied ? <Check className="w-3 h-3 stroke-[3]" /> : <Copy className="w-3 h-3" />}
+                  <span>{copied ? 'Copiado!' : 'Copiar'}</span>
+                </button>
+              </div>
+
+              <pre className="font-mono text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed bg-slate-50 dark:bg-slate-950/60 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-800 select-all max-h-44 overflow-y-auto">
+                {currentMessage}
+              </pre>
+            </div>
+          </div>
+        ) : (
+          /* CASO 2: FORMULÁRIO DE REGISTRO / EDIÇÃO DE RECEBEDOR */
+          <div className="p-4 sm:p-5 space-y-3.5 overflow-y-auto flex-1 text-xs">
+            
+            {/* SELEÇÃO DE RECEBEDOR (MODO ENTREGA) */}
+            {mode === 'entrega' && (
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider block flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>Quem recebeu o pacote? *</span>
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {RECEIVER_PRESETS.map((preset) => {
+                    const Icon = preset.icon;
+                    const isSelected = receiverType === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          setReceiverType(preset.id);
+                          if (preset.id === 'proprio_morador') {
+                            setReceiverCustomText('');
+                          } else if (preset.id === 'portaria' && savedDoormen.length === 1 && !receiverCustomText) {
+                            setReceiverCustomText(savedDoormen[0]);
+                          }
+                        }}
+                        className={`min-h-[50px] p-2.5 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer touch-manipulation active:scale-95 ${
+                          isSelected
+                            ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-500 text-emerald-950 dark:text-emerald-100 font-black shadow-xs ring-2 ring-emerald-500/20'
+                            : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 text-slate-700 dark:text-slate-300 font-bold'
+                        }`}
+                      >
+                        <div
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-300 border border-slate-200 dark:border-slate-600'
+                          }`}
+                        >
+                          <Icon className="w-3.5 h-3.5 stroke-[2.5]" />
+                        </div>
+                        <span className="text-xs leading-tight">{preset.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Porteiros Cadastrados no Endereço */}
+                {receiverType === 'portaria' && savedDoormen.length > 0 && (
+                  <div className="p-3 bg-amber-50/90 dark:bg-amber-950/30 border border-amber-300/80 dark:border-amber-800/40 rounded-2xl space-y-2 animate-fadeIn shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 stroke-[2.5]" />
+                        <span>Porteiros salvos no Nº {houseNumber}:</span>
+                      </span>
+                      <span className="text-[10px] font-black text-amber-800 dark:text-amber-300 bg-amber-200/70 dark:bg-amber-900/60 px-2 py-0.5 rounded-md">
+                        Memória
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {savedDoormen.map((doorman) => {
+                        const isChosen = cleanDoormanName(receiverCustomText).toLowerCase() === doorman.toLowerCase();
+                        return (
+                          <button
+                            key={doorman}
+                            type="button"
+                            onClick={() => setReceiverCustomText(doorman)}
+                            className={`h-9 px-3 rounded-xl text-xs font-black transition-all cursor-pointer touch-manipulation flex items-center gap-1.5 ${
+                              isChosen
+                                ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-500/30'
+                                : 'bg-white dark:bg-slate-800 text-amber-950 dark:text-amber-200 border border-amber-300 dark:border-amber-700/60 hover:bg-amber-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            <User className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <span>{doorman}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* DETALHES ESPECÍFICOS DE ACORDO COM QUEM RECEBEU */}
+
+                {/* CASO A: PORTARIA */}
+                {receiverType === 'portaria' && (
+                  <div className="space-y-1 animate-fadeIn pt-1">
+                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                      Nome do Porteiro / Detalhes da Portaria:
+                    </label>
+                    <input
+                      type="text"
+                      value={receiverCustomText}
+                      onChange={(e) => setReceiverCustomText(e.target.value)}
+                      placeholder="Ex: Porteiro José / Portaria bloco B"
+                      className="w-full h-11 px-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-900"
+                      autoFocus={savedDoormen.length === 0}
+                    />
+                  </div>
+                )}
+
+                {/* CASO B: FAMILIAR / PARENTE */}
+                {receiverType === 'familiar' && (
+                  <div className="space-y-2.5 animate-fadeIn p-3 bg-slate-50/90 dark:bg-slate-950/60 border border-slate-200/90 dark:border-slate-800 rounded-2xl">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[2.5]" />
+                          <span>Quem é o familiar? *</span>
+                        </span>
+                        {familyRelation && (
+                          <span className="text-[10px] font-black text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-300/60 dark:border-emerald-800/60">
+                            {familyRelation}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Chips de Parentesco Rápido */}
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                        {FAMILY_RELATIONS.map((rel) => {
+                          const isSelected = familyRelation === rel;
+                          return (
+                            <button
+                              key={rel}
+                              type="button"
+                              onClick={() => setFamilyRelation(rel)}
+                              className={`h-9 px-2 rounded-xl text-xs font-black transition-all cursor-pointer touch-manipulation active:scale-95 flex items-center justify-center ${
+                                isSelected
+                                  ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-500/20'
+                                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 font-bold'
+                              }`}
+                            >
+                              {rel}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Nome do familiar */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                        Nome do familiar (opcional):
+                      </label>
+                      <input
+                        type="text"
+                        value={familyName}
+                        onChange={(e) => setFamilyName(e.target.value)}
+                        placeholder="Ex: Lucas, Dona Maria..."
+                        className="w-full h-11 px-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+
+                    {/* Familiares Salvos nesta residência */}
+                    {savedFamily.length > 0 && (
+                      <div className="pt-1 space-y-1.5 border-t border-slate-200/60 dark:border-slate-800/80">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                            Salvos no Nº {houseNumber}:
+                          </span>
+                          <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">1 toque</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {savedFamily.map((fam) => (
+                            <button
+                              key={fam}
+                              type="button"
+                              onClick={() => {
+                                const parts = fam.split(/[:\-]/);
+                                if (parts.length > 1) {
+                                  setFamilyRelation(parts[0].trim());
+                                  setFamilyName(parts.slice(1).join('-').trim().replace(/^\((.*?)\)$/, '$1'));
+                                } else if (FAMILY_RELATIONS.some((r) => r.toLowerCase() === fam.toLowerCase())) {
+                                  setFamilyRelation(fam);
+                                  setFamilyName('');
+                                } else {
+                                  setFamilyName(fam);
+                                }
+                              }}
+                              className="h-8 px-2.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
+                            >
+                              <Users className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                              <span>{fam}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* CASO C: VIZINHO */}
+                {receiverType === 'vizinho' && (
+                  <div className="space-y-2.5 animate-fadeIn p-3 bg-slate-50/90 dark:bg-slate-950/60 border border-slate-200/90 dark:border-slate-800 rounded-2xl">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-black text-slate-800 dark:text-slate-200 block flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <Home className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[2.5]" />
+                          <span>Nº da casa ou local do vizinho: *</span>
+                        </span>
+                      </label>
+
+                      {/* Chips rápidos de localização de vizinho */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {NEIGHBOR_LOCATION_PRESETS.map((loc) => (
+                          <button
+                            key={loc}
+                            type="button"
+                            onClick={() => setNeighborNumber(loc)}
+                            className={`h-8 px-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              neighborNumber === loc
+                                ? 'bg-emerald-600 text-white shadow-xs'
+                                : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                            }`}
+                          >
+                            {loc}
+                          </button>
+                        ))}
+                      </div>
+
+                      <input
+                        type="text"
+                        value={neighborNumber}
+                        onChange={(e) => setNeighborNumber(e.target.value)}
+                        placeholder="Ex: 144 ou Casa ao lado"
+                        className="w-full h-11 px-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                        autoFocus
+                      />
+                    </div>
+
+                    {/* Nome do vizinho */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                        Nome do vizinho (opcional):
+                      </label>
+                      <input
+                        type="text"
+                        value={neighborName}
+                        onChange={(e) => setNeighborName(e.target.value)}
+                        placeholder="Ex: Dona Maria, Seu Carlos..."
+                        className="w-full h-11 px-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+
+                    {/* Vizinhos salvos no endereço */}
+                    {savedNeighbors.length > 0 && (
+                      <div className="pt-1 space-y-1.5 border-t border-slate-200/60 dark:border-slate-800/80">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                            Vizinhos salvos no Nº {houseNumber}:
+                          </span>
+                          <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">1 toque</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {savedNeighbors.map((viz) => (
+                            <button
+                              key={viz}
+                              type="button"
+                              onClick={() => {
+                                const parenMatch = viz.match(/^(.*?)\s*\((.*?)\)$/);
+                                if (parenMatch) {
+                                  setNeighborNumber(parenMatch[1].replace(/^Nº\s*/i, '').trim());
+                                  setNeighborName(parenMatch[2].trim());
+                                } else {
+                                  setNeighborNumber(viz.replace(/^Nº\s*/i, '').trim());
+                                }
+                              }}
+                              className="h-8 px-2.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
+                            >
+                              <Home className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                              <span>{viz}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* CASO D: LOCAL SEGURO */}
+                {receiverType === 'local_seguro' && (
+                  <div className="space-y-2 animate-fadeIn p-3 bg-slate-50/90 dark:bg-slate-950/60 border border-slate-200/90 dark:border-slate-800 rounded-2xl">
+                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                      Onde o pacote foi deixado?
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {['Por baixo do portão', 'Na grade', 'Caixa de correio', 'Com o vigia'].map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => setReceiverCustomText(opt)}
+                          className={`h-8 px-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            receiverCustomText === opt
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                          }`}
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      value={receiverCustomText}
+                      onChange={(e) => setReceiverCustomText(e.target.value)}
+                      placeholder="Ex: Por baixo do portão, na grade..."
+                      className="w-full h-11 px-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                )}
+
+                {/* CASO E: TERCEIROS / OUTROS */}
+                {receiverType === 'terceiros' && (
+                  <div className="space-y-1 animate-fadeIn pt-1">
+                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                      Nome / Identificação de quem recebeu:
+                    </label>
+                    <input
+                      type="text"
+                      value={receiverCustomText}
+                      onChange={(e) => setReceiverCustomText(e.target.value)}
+                      placeholder="Ex: Nome da pessoa ou detalhes"
+                      className="w-full h-11 px-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-900"
+                      autoFocus
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SELEÇÃO DE INSUCESSO (MODO INSUCESSO) */}
+            {mode === 'insucesso' && (
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-rose-800 dark:text-rose-400 uppercase tracking-wider block flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 stroke-[2.5]" />
+                  <span>Motivo do Insucesso *</span>
+                </label>
+
+                <div className="space-y-1.5">
+                  {INSUCESSO_REASONS.map((reason) => (
                     <button
                       key={reason}
                       type="button"
                       onClick={() => setSelectedReason(reason)}
-                      className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between text-xs transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-rose-50 border-rose-500 text-rose-950 font-black ring-1 ring-rose-500'
-                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700 font-bold'
+                      className={`w-full min-h-[44px] p-2.5 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer touch-manipulation flex items-center justify-between ${
+                        selectedReason === reason
+                          ? 'bg-rose-50 dark:bg-rose-950/60 border-rose-400 dark:border-rose-600 text-rose-950 dark:text-rose-200 font-black shadow-xs ring-1 ring-rose-500/30'
+                          : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 text-slate-700 dark:text-slate-300'
                       }`}
                     >
                       <span>{reason}</span>
-                      {isSelected && <Check className="w-4 h-4 text-rose-600 shrink-0" />}
+                      {selectedReason === reason && <Check className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 stroke-[3]" />}
                     </button>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
 
-              {selectedReason === 'Outro motivo' && (
-                <div className="pt-1">
+                {selectedReason === 'Outro motivo' && (
                   <input
                     type="text"
                     value={customReasonText}
                     onChange={(e) => setCustomReasonText(e.target.value)}
-                    placeholder="Descreva o motivo do insucesso..."
-                    className="w-full px-3 py-2 bg-slate-50 border-2 border-rose-400 rounded-xl text-xs font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-rose-600"
+                    placeholder="Descreva o motivo com clareza..."
+                    className="w-full h-11 px-3 bg-slate-50 dark:bg-slate-950/60 border border-rose-300 dark:border-rose-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-rose-500"
                     autoFocus
                   />
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )}
 
-          {/* PREVIEW DO TEXTO PRONTO DO WHATSAPP (ATUALIZA EM TEMPO REAL) */}
-          <div className={`border-2 rounded-2xl p-3.5 relative transition-colors ${
-            mode === 'entrega' ? 'bg-emerald-50/70 border-emerald-200' : 'bg-rose-50/70 border-rose-200'
-          }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 border ${
-                mode === 'entrega'
-                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                  : 'bg-rose-100 text-rose-900 border-rose-300'
-              }`}>
-                <Sparkles className="w-3 h-3" />
-                Mensagem Gerada para o Zap
-              </span>
-
-              <div className="flex items-center gap-1.5">
+            {/* PRÉ-VISUALIZAÇÃO DO TEXTO */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Texto que será gerado:
+                </span>
                 <button
                   type="button"
                   onClick={() => setIsEditingData(!isEditingData)}
-                  className="text-[11px] font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1 bg-white px-2 py-1 rounded-lg border border-slate-200 cursor-pointer"
+                  className="text-[10px] font-bold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1 cursor-pointer touch-manipulation"
                 >
                   <Edit2 className="w-3 h-3" />
-                  <span>{isEditingData ? 'Fechar Edição' : 'Editar Dados'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleCopyText}
-                  className={`text-[11px] font-bold px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
-                    copied
-                      ? 'bg-emerald-600 text-white border-emerald-600'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  <span>{copied ? 'Copiado!' : 'Copiar'}</span>
+                  <span>{isEditingData ? 'Ocultar ajuste' : 'Ajustar dados'}</span>
                 </button>
               </div>
+
+              {/* Formulário expandível de ajuste rápido de cliente ou endereço */}
+              {isEditingData && (
+                <div className="p-3 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl space-y-2 animate-fadeIn text-[11px]">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block mb-0.5">Destinatário</label>
+                      <input
+                        type="text"
+                        value={clientName}
+                        onChange={(e) => setClientName(e.target.value)}
+                        className="w-full h-9 px-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-800 dark:text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block mb-0.5">Número</label>
+                      <input
+                        type="text"
+                        value={houseNumber}
+                        onChange={(e) => setHouseNumber(e.target.value)}
+                        className="w-full h-9 px-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-800 dark:text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block mb-0.5">Complemento</label>
+                    <input
+                      type="text"
+                      value={complement}
+                      onChange={(e) => setComplement(e.target.value)}
+                      placeholder="Apt, Bloco, Casa..."
+                      className="w-full h-9 px-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-800 dark:text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <pre className="font-mono text-[11px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 select-all max-h-28 overflow-y-auto">
+                {currentMessage}
+              </pre>
             </div>
 
-            <pre className="font-mono text-xs text-slate-800 whitespace-pre-wrap leading-relaxed bg-white/80 p-3 rounded-xl border border-slate-200/80 max-h-48 overflow-y-auto select-all">
-              {currentMessage}
-            </pre>
           </div>
+        )}
 
-          {/* Ajuste Rápido de Campos (Inclusive Complemento do Endereço) */}
-          {isEditingData && (
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5 text-xs animate-fadeIn shadow-xs">
-              <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Ajustar Dados e Complementos da Entrega</span>
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">🏠 Nº Casa</label>
-                  <input
-                    type="text"
-                    value={houseNumber}
-                    onChange={(e) => setHouseNumber(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">📦 Código Pacote</label>
-                  <input
-                    type="text"
-                    value={packageCode}
-                    onChange={(e) => setPackageCode(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-              </div>
-
-              {/* Barra de Complemento do Endereço */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-600 block mb-0.5">
-                  📍 Complemento do Endereço (Apto, Bloco, Casa, Loja, etc.):
-                </label>
-                <input
-                  type="text"
-                  value={complement}
-                  onChange={(e) => setComplement(e.target.value)}
-                  placeholder="Ex: Apto 302, Bloco B, Casa 2"
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold text-slate-600 block mb-0.5">👤 Cliente (Destinatário)</label>
-                <input
-                  type="text"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">📅 Data</label>
-                  <input
-                    type="text"
-                    value={deliveryDate}
-                    onChange={(e) => setDeliveryDate(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">⏰ Horário</label>
-                  <input
-                    type="text"
-                    value={deliveryTime}
-                    onChange={(e) => setDeliveryTime(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Dica da Câmera do WhatsApp */}
-          <div className="bg-slate-100 border border-slate-200 rounded-2xl p-3 flex items-start gap-2.5 text-xs text-slate-700">
-            <span className="text-base">📸</span>
-            <div className="space-y-0.5 text-[11px] leading-tight">
-              <p className="font-extrabold text-slate-900">Como funciona o envio:</p>
-              <p className="text-slate-600">
-                O botão abaixo abre o WhatsApp e coloca o texto na caixa de entrada do grupo. Depois é só você tocar no ícone da câmera do WhatsApp e tirar a foto da entrega!
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Rodapé com Botões Mobile */}
-        <div className="p-4 bg-slate-50 border-t border-slate-200 space-y-2">
+        {/* RODAPÉ COM BOTÕES DE AÇÃO (56px TOUCH TARGET) */}
+        <div className="p-4 sm:p-5 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 space-y-2 pb-6 sm:pb-5">
           {shareFeedback && (
-            <div className="p-2 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-center text-xs font-bold animate-pulse">
+            <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl text-center text-xs font-black animate-fadeIn">
               {shareFeedback}
             </div>
           )}
 
-          <button
-            onClick={(e) => handleShareAndConfirm(e)}
-            className={`w-full py-3.5 px-4 text-white font-black text-sm rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.98] ${
-              mode === 'entrega'
-                ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/30'
-                : 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/30'
-            }`}
-          >
-            <Share2 className="w-5 h-5 text-white" />
-            <span>
-              {mode === 'entrega'
-                ? '📲 Abrir Zap com Texto de Entrega'
-                : '⚠️ Abrir Zap com Texto de Insucesso'}
-            </span>
-          </button>
+          {/* MODO A: VISUALIZANDO REGISTRO DA ENTREGA CONCLUÍDA */}
+          {isAlreadyDelivered && !isEditingReceipt ? (
+            <>
+              <button
+                type="button"
+                onClick={handleCopyReceipt}
+                className="w-full h-14 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-black text-sm sm:text-base rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer touch-manipulation active:scale-[0.99]"
+              >
+                {copied ? <Check className="w-5 h-5 stroke-[2.5]" /> : <Copy className="w-5 h-5 stroke-[2.5]" />}
+                <span>{copied ? '✓ Texto Copiado com Sucesso!' : '📋 Copiar Texto da Entrega'}</span>
+              </button>
 
-          <div className="flex items-center justify-between pt-1">
-            <button
-              onClick={(e) => handleSaveWithoutOpening(e)}
-              className="text-xs font-bold text-slate-600 hover:text-slate-900 py-1 px-2 rounded-lg cursor-pointer"
-            >
-              Salvar sem abrir Zap
-            </button>
-            <button
-              onClick={onClose}
-              className="text-xs font-bold text-slate-400 hover:text-slate-600 py-1 px-2 rounded-lg cursor-pointer"
-            >
-              Cancelar
-            </button>
-          </div>
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingReceipt(true)}
+                  className="h-11 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer touch-manipulation border border-slate-200/60 dark:border-slate-700/60"
+                >
+                  <Edit2 className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                  <span>Corrigir recebedor</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="h-11 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold text-xs hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer touch-manipulation"
+                >
+                  Fechar
+                </button>
+              </div>
+            </>
+          ) : isEditingReceipt ? (
+            /* MODO B: CORRIGINDO DADOS DE UMA ENTREGA JÁ CONCLUÍDA */
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  saveUpdatedDelivery('entregue');
+                  setIsEditingReceipt(false);
+                  onClose();
+                }}
+                className="w-full h-14 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-black text-sm sm:text-base rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer touch-manipulation active:scale-[0.99]"
+              >
+                <Check className="w-5 h-5 stroke-[2.5]" />
+                <span>Salvar Correções no Registro</span>
+              </button>
+
+              <div className="flex items-center justify-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingReceipt(false)}
+                  className="h-11 px-4 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white font-bold text-xs cursor-pointer touch-manipulation"
+                >
+                  Voltar ao Registro
+                </button>
+              </div>
+            </>
+          ) : (
+            /* MODO C: REGISTRANDO UMA NOVA ENTREGA */
+            <>
+              {/* BOTÃO PRINCIPAL: COPIAR E CONCLUIR */}
+              <button
+                type="button"
+                onClick={(e) => handleCopyAndComplete(e)}
+                className={`w-full h-14 text-white font-black text-sm sm:text-base rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer touch-manipulation active:scale-[0.99] ${
+                  mode === 'entrega'
+                    ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20 active:bg-emerald-700'
+                    : 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/20 active:bg-rose-700'
+                }`}
+              >
+                <Copy className="w-5 h-5 stroke-[2.5]" />
+                <span>
+                  {mode === 'entrega'
+                    ? 'Copiar Texto e Concluir (+2 🪙)'
+                    : 'Copiar Texto e Marcar Insucesso'}
+                </span>
+              </button>
+
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={(e) => handleCompleteWithoutCopy(e)}
+                  className="h-11 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-extrabold text-xs cursor-pointer touch-manipulation flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 stroke-[2.5]" />
+                  <span>
+                    {mode === 'entrega' ? 'Concluir sem copiar (+2 🪙)' : 'Salvar sem copiar'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="h-11 px-3 rounded-xl text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 font-bold text-xs cursor-pointer touch-manipulation"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
       </div>

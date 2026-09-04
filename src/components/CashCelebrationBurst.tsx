@@ -43,26 +43,34 @@ export const CashCelebrationBurst: React.FC = () => {
         );
       })}
 
-      {/* 2. Banner Flutuante de Alto Impacto: + R$ DINHEIRO NA CONTA! */}
-      <div className="absolute top-16 sm:top-20 left-1/2 -translate-x-1/2 flex items-center gap-2.5 bg-gradient-to-r from-emerald-600 via-teal-700 to-amber-600 text-white px-5 py-2.5 rounded-2xl shadow-2xl border-2 border-amber-300/60 backdrop-blur-md animate-fadeIn scale-105">
-        <span className="text-2xl animate-bounce leading-none">💰</span>
-        <div className="flex flex-col">
-          <div className="flex items-center gap-1.5">
-            <span className="font-black text-sm sm:text-base tracking-tight text-white drop-shadow-sm">
-              + R$ DINHEIRO NA CONTA!
-            </span>
-            <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-md uppercase shadow-xs">
-              {activeEvent.count > 1 ? `${activeEvent.count}x baixas` : 'Confirmado'}
-            </span>
+      {/* 2. Banner Flutuante de Alto Impacto: +2 MOEDAS DE OURO + R$ DINHEIRO NA CONTA! */}
+      {(() => {
+        const coinsEarned = (activeEvent.count || 1) * 2;
+        return (
+          <div className="absolute top-16 sm:top-20 left-1/2 -translate-x-1/2 flex items-center gap-2.5 bg-gradient-to-r from-amber-600 via-amber-700 to-emerald-700 text-white px-5 py-2.5 rounded-2xl shadow-2xl border-2 border-amber-300/80 backdrop-blur-md animate-fadeIn scale-105">
+            <span className="text-2xl animate-bounce leading-none">🪙</span>
+            <div className="flex flex-col">
+              <div className="flex items-center gap-1.5">
+                <span className="font-black text-sm sm:text-base tracking-tight text-amber-200 drop-shadow-sm">
+                  +{coinsEarned} MOEDAS DE OURO!
+                </span>
+                <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-md uppercase shadow-xs">
+                  {activeEvent.count > 1 ? `${activeEvent.count}x baixas` : 'Entregue'}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px] text-emerald-100 font-bold">
+                <span>💰 Dinheiro na Conta</span>
+                {activeEvent.clientName && (
+                  <span className="text-white/90 font-medium truncate max-w-[180px]">
+                    • {activeEvent.clientName}
+                  </span>
+                )}
+              </div>
+            </div>
+            <Sparkles className="w-5 h-5 text-amber-300 shrink-0 animate-spin" />
           </div>
-          {activeEvent.clientName && (
-            <span className="text-[11px] text-emerald-100 font-bold truncate max-w-[220px]">
-              {activeEvent.clientName}
-            </span>
-          )}
-        </div>
-        <Sparkles className="w-5 h-5 text-amber-300 shrink-0 animate-spin" />
-      </div>
+        );
+      })()}
 
       <style>{`
         @keyframes moneyBurstFly {

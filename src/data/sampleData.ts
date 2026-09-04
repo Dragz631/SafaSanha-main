@@ -135,4 +135,22 @@ export const INITIAL_ASSOCIATION_MEMORY: AssociationMemoryRecord[] = [
   },
 ];
 
-export const INITIAL_DELIVERIES: DeliveryData[] = [];
+export const INITIAL_DELIVERIES: DeliveryData[] = [
+  {
+    id_entrega: 'del_init_1',
+    codigo_pacote: '#BR123456789',
+    nome_destinatario: 'Antônio Silva',
+    recebedor_detalhes: 'Antônio Silva',
+    recebedor_tipo: 'proprio_morador',
+    endereco_rua: 'Rua Carlos Seidl',
+    numero_casa: '21',
+    endereco_numero: '21',
+    complemento: 'Casa Principal',
+    endereco_completo: 'Rua Carlos Seidl, 21 (Casa Principal)',
+    foto_pacote_path: '',
+    foto_local_path: '',
+    data_hora: new Date().toISOString(),
+    status: 'aguardando_rua',
+    origem_leitura: 'manual',
+  },
+];

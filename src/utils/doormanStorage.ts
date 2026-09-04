@@ -139,3 +139,120 @@ export const removeDoormanForAddress = (
 
   saveAllDoormenRecords(records);
 };
+
+// ==========================================
+// MEMÓRIA DE FAMILIARES POR ENDEREÇO
+// ==========================================
+const FAMILY_STORAGE_KEY = 'logiscan_saved_family_v1';
+
+const loadAllFamilyRecords = (): Record<string, string[]> => {
+  try {
+    const raw = localStorage.getItem(FAMILY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null) return parsed;
+  } catch (_e) {}
+  return {};
+};
+
+const saveAllFamilyRecords = (records: Record<string, string[]>): void => {
+  try {
+    localStorage.setItem(FAMILY_STORAGE_KEY, JSON.stringify(records));
+  } catch (_e) {}
+};
+
+export const getFamilyForAddress = (street: string, houseNumber: string): string[] => {
+  const records = loadAllFamilyRecords();
+  const exactKey = getAddressKey(street, houseNumber);
+  const numberOnlyKey = `number_only:::${(houseNumber || '').trim().toLowerCase()}`;
+  const set = new Set<string>();
+  (records[exactKey] || []).forEach((n) => set.add(n.trim()));
+  (records[numberOnlyKey] || []).forEach((n) => set.add(n.trim()));
+  return Array.from(set).filter(Boolean);
+};
+
+export const saveFamilyForAddress = (
+  street: string,
+  houseNumber: string,
+  familyText: string
+): void => {
+  const clean = (familyText || '').trim();
+  if (!clean || clean.length < 2) return;
+
+  const records = loadAllFamilyRecords();
+  const exactKey = getAddressKey(street, houseNumber);
+  const numberOnlyKey = `number_only:::${(houseNumber || '').trim().toLowerCase()}`;
+
+  const currentExact = records[exactKey] || [];
+  if (!currentExact.some((n) => n.toLowerCase() === clean.toLowerCase())) {
+    records[exactKey] = [clean, ...currentExact];
+  }
+
+  if (houseNumber && houseNumber !== 'S/N') {
+    const currentNumberOnly = records[numberOnlyKey] || [];
+    if (!currentNumberOnly.some((n) => n.toLowerCase() === clean.toLowerCase())) {
+      records[numberOnlyKey] = [clean, ...currentNumberOnly];
+    }
+  }
+
+  saveAllFamilyRecords(records);
+};
+
+// ==========================================
+// MEMÓRIA DE VIZINHOS POR ENDEREÇO
+// ==========================================
+const NEIGHBOR_STORAGE_KEY = 'logiscan_saved_neighbors_v1';
+
+const loadAllNeighborRecords = (): Record<string, string[]> => {
+  try {
+    const raw = localStorage.getItem(NEIGHBOR_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null) return parsed;
+  } catch (_e) {}
+  return {};
+};
+
+const saveAllNeighborRecords = (records: Record<string, string[]>): void => {
+  try {
+    localStorage.setItem(NEIGHBOR_STORAGE_KEY, JSON.stringify(records));
+  } catch (_e) {}
+};
+
+export const getNeighborsForAddress = (street: string, houseNumber: string): string[] => {
+  const records = loadAllNeighborRecords();
+  const exactKey = getAddressKey(street, houseNumber);
+  const numberOnlyKey = `number_only:::${(houseNumber || '').trim().toLowerCase()}`;
+  const set = new Set<string>();
+  (records[exactKey] || []).forEach((n) => set.add(n.trim()));
+  (records[numberOnlyKey] || []).forEach((n) => set.add(n.trim()));
+  return Array.from(set).filter(Boolean);
+};
+
+export const saveNeighborForAddress = (
+  street: string,
+  houseNumber: string,
+  neighborText: string
+): void => {
+  const clean = (neighborText || '').trim();
+  if (!clean || clean.length < 2) return;
+
+  const records = loadAllNeighborRecords();
+  const exactKey = getAddressKey(street, houseNumber);
+  const numberOnlyKey = `number_only:::${(houseNumber || '').trim().toLowerCase()}`;
+
+  const currentExact = records[exactKey] || [];
+  if (!currentExact.some((n) => n.toLowerCase() === clean.toLowerCase())) {
+    records[exactKey] = [clean, ...currentExact];
+  }
+
+  if (houseNumber && houseNumber !== 'S/N') {
+    const currentNumberOnly = records[numberOnlyKey] || [];
+    if (!currentNumberOnly.some((n) => n.toLowerCase() === clean.toLowerCase())) {
+      records[numberOnlyKey] = [clean, ...currentNumberOnly];
+    }
+  }
+
+  saveAllNeighborRecords(records);
+};
+

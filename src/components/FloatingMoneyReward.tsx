@@ -24,14 +24,14 @@ export const FloatingMoneyReward: React.FC = () => {
 
   return (
     <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none animate-fadeIn">
-      <div className="flex items-center gap-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-amber-600 text-white px-4 py-2 rounded-2xl shadow-xl shadow-emerald-950/20 border border-white/25 backdrop-blur-md">
+      <div className="flex items-center gap-2.5 bg-gradient-to-r from-amber-600 via-amber-700 to-emerald-700 text-white px-4 py-2 rounded-2xl shadow-xl shadow-amber-950/20 border border-amber-300/40 backdrop-blur-md">
         <span className="text-lg leading-none animate-bounce">🪙</span>
         <div className="flex flex-col">
           <div className="flex items-center gap-1.5">
-            <span className="font-black text-xs tracking-tight text-white drop-shadow-xs">
-              + R$ DINHEIRO NA CONTA!
+            <span className="font-black text-xs tracking-tight text-amber-200 drop-shadow-xs">
+              +{(reward.count || 1) * 2} MOEDAS DE OURO!
             </span>
-            <span className="bg-white/20 text-amber-200 text-[9px] font-black px-1.5 py-0.2 rounded-md uppercase">
+            <span className="bg-amber-400 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded-md uppercase">
               {reward.count > 1 ? `${reward.count}x baixas` : '1 entrega'}
             </span>
           </div>

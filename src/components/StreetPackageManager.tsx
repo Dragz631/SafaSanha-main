@@ -103,6 +103,7 @@ interface StreetPackageManagerProps {
   isRegionModalOpen?: boolean;
   onOpenRegionModal?: () => void;
   onCloseRegionModal?: () => void;
+  onOpenDailyStreetPicker?: () => void;
   onOpenCloseDayModal?: () => void;
 }
 
@@ -122,6 +123,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   isRegionModalOpen,
   onOpenRegionModal,
   onCloseRegionModal,
+  onOpenDailyStreetPicker,
   onOpenCloseDayModal,
 }) => {
   // Modais locais
@@ -588,88 +590,105 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   };
 
   const handleConfirmGroupDelivery = (updatedList: DeliveryData[]) => {
-    const deliveredCount = updatedList.filter(
-      (d) => d.status === 'entregue' || d.status === 'concluido'
-    ).length;
     updatedList.forEach((d) => {
       onUpdateDelivery(d);
     });
     setSelectedGroupForDelivery(null);
-    if (deliveredCount > 0) {
-      triggerReward(deliveredCount, updatedList[0]?.nome_destinatario);
-    }
   };
 
   return (
     <div className="space-y-3 pb-24">
-
-
       {/* 1. PAINEL DE CONTROLE DA RUA ATIVA COM BARRA DE PROGRESSO & RUAS DO DIA */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl p-3.5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2.5 transition-colors">
+      <div className="bg-slate-900/95 backdrop-blur-md rounded-2xl p-4 border border-slate-800/80 shadow-md space-y-3.5 transition-colors">
         
         {/* Rua Atual & Botão Trocar Rua */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className={`w-9 h-9 rounded-2xl flex items-center justify-center font-black shrink-0 shadow-xs ${
-              isManilhaActive ? 'bg-amber-400 text-slate-950' : 'bg-emerald-500 text-slate-950'
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black shrink-0 shadow-sm border ${
+              isManilhaActive 
+                ? 'bg-amber-400/20 text-amber-300 border-amber-400/30' 
+                : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
             }`}>
               {isManilhaActive ? <Navigation className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
                   {isManilhaActive ? 'Setor Unificado' : 'Rua em Atendimento'}
                 </span>
-                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded-md border ${activeStreetInfo.badgeColor}`}>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${activeStreetInfo.badgeColor}`}>
                   {activeStreetInfo.sector}
                 </span>
               </div>
-              <h1 className="text-base sm:text-lg font-black text-slate-900 dark:text-slate-100 leading-tight truncate">
+              <h1 className="text-lg sm:text-xl font-black text-slate-100 leading-snug tracking-tight truncate">
                 {activeStreet}
               </h1>
             </div>
           </div>
 
           <button
-            onClick={openRegionModal}
-            className="text-[11px] font-extrabold text-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-3 py-1.5 rounded-xl border border-emerald-300/80 dark:border-emerald-800/60 shrink-0 cursor-pointer flex items-center gap-1 transition-all active:scale-95 shadow-xs"
+            onClick={onOpenDailyStreetPicker || openRegionModal}
+            className="h-10 px-3.5 bg-slate-800 hover:bg-slate-700/90 text-slate-200 border border-slate-700/80 rounded-xl text-xs font-bold shrink-0 cursor-pointer flex items-center gap-1.5 transition-all active:scale-95 shadow-sm touch-manipulation"
           >
-            <Layers className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Definir Ruas de Hoje</span>
+            <Layers className="w-4 h-4 text-emerald-400" />
+            <span className="hidden xs:inline">Ruas de Hoje</span>
+            <span className="xs:hidden">Ruas</span>
           </button>
         </div>
 
-        {/* Barra de Progresso e Contadores Detalhados */}
-        <div className={`grid gap-2 text-center pt-1 ${
-          insucessoCount > 0 ? 'grid-cols-4' : 'grid-cols-3'
-        }`}>
-          <div className="bg-slate-50 dark:bg-slate-800/50 p-2 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
-            <span className="text-[10px] font-bold text-slate-500 block">Total</span>
-            <span className="text-base font-black text-slate-900 dark:text-slate-100">{totalCount}</span>
+        {/* Indicador de Progresso com Contadores Integrados e Elegantes */}
+        <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-extrabold text-slate-300">
+              Progresso da Rua
+            </span>
+            <span className="font-mono font-black text-xs px-2 py-0.5 rounded-md bg-slate-800 text-emerald-400 border border-slate-700/50">
+              {totalCount > 0 ? Math.round((deliveredCount / totalCount) * 100) : 0}%
+            </span>
           </div>
 
-          <div className="bg-amber-50/60 dark:bg-amber-950/30 p-2 rounded-xl border border-amber-200/70 dark:border-amber-800/40">
-            <span className="text-[10px] font-bold text-amber-800 block">Pendentes</span>
-            <span className="text-base font-black text-amber-900 dark:text-amber-300">{pendingCount}</span>
+          {/* Barra de Progresso Suave */}
+          <div className="w-full bg-slate-800/80 rounded-full h-2.5 overflow-hidden flex shadow-inner">
+            <div
+              className="bg-gradient-to-r from-emerald-500 to-emerald-400 h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${totalCount > 0 ? Math.round((deliveredCount / totalCount) * 100) : 0}%`,
+              }}
+            />
           </div>
 
-          <div className="bg-emerald-50/60 dark:bg-emerald-950/30 p-2 rounded-xl border border-emerald-200/70 dark:border-emerald-800/40">
-            <span className="text-[10px] font-bold text-emerald-800 block">Entregues</span>
-            <span className="text-base font-black text-emerald-900 dark:text-emerald-300">{deliveredCount}</span>
-          </div>
-
-          {insucessoCount > 0 && (
-            <div className="bg-rose-50 p-2 rounded-xl border border-rose-200">
-              <span className="text-[10px] font-bold text-rose-800 block">Insucessos</span>
-              <span className="text-base font-black text-rose-900">{insucessoCount}</span>
+          {/* Métricas Compactas em Linha */}
+          <div className="flex items-center justify-between flex-wrap gap-2 pt-1 text-[11px] font-bold">
+            <div className="flex items-center gap-1.5 text-slate-400">
+              <span>Total:</span>
+              <span className="text-slate-100 font-extrabold text-xs">{totalCount}</span>
             </div>
-          )}
+
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block shadow-xs shadow-emerald-400/50"></span>
+                <span>{deliveredCount} entregues</span>
+              </div>
+
+              <div className="flex items-center gap-1 text-amber-400">
+                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block"></span>
+                <span>{pendingCount} pendentes</span>
+              </div>
+
+              {insucessoCount > 0 && (
+                <div className="flex items-center gap-1 text-rose-400">
+                  <span className="w-2 h-2 rounded-full bg-rose-400 inline-block"></span>
+                  <span>{insucessoCount} falhas</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Atalhos de Ruas Selecionadas para Hoje no Caju em carrossel horizontal */}
-        <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-          <span className="text-[10px] font-black text-slate-400 shrink-0 uppercase tracking-wider">
-            Ruas de Hoje:
+        {/* Atalhos de Ruas Selecionadas para Hoje em carrossel ergonômico */}
+        <div className="pt-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <span className="text-[10px] font-black text-slate-400 shrink-0 uppercase tracking-wider pl-0.5">
+            Rotas:
           </span>
           {savedStreets.map((st) => {
             const isCurrent = activeStreet.toLowerCase() === st.toLowerCase();
@@ -678,78 +697,59 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
               <button
                 key={st}
                 onClick={() => onSelectStreet(st)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                className={`h-9 px-3.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 touch-manipulation ${
                   isCurrent
-                    ? 'bg-slate-900 text-white shadow-xs'
+                    ? 'bg-emerald-500 text-slate-950 font-black shadow-sm'
                     : isMan
-                    ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 border border-amber-300'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/60'
+                    ? 'bg-amber-400/15 text-amber-300 hover:bg-amber-400/25 border border-amber-400/30'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/60'
                 }`}
               >
-                {isMan ? '🏗️ ' : '📍 '}
+                <span>{isMan ? '🏗️' : '📍'}</span>
                 <span>{st}</span>
               </button>
             );
           })}
           <button
-            onClick={openRegionModal}
-            className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300/80 transition-all cursor-pointer shrink-0 flex items-center gap-1"
+            onClick={onOpenDailyStreetPicker || openRegionModal}
+            className="h-9 px-3 rounded-xl text-xs font-bold bg-slate-800/80 hover:bg-slate-750 text-emerald-400 border border-emerald-500/30 transition-all cursor-pointer shrink-0 flex items-center gap-1 touch-manipulation"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>+ Ruas de Hoje</span>
+            <span>+ Ruas</span>
           </button>
-
-          {deliveries.length > 0 && onClearAllDeliveries && (
-            <button
-              onClick={onClearAllDeliveries}
-              className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 border border-rose-200 transition-all cursor-pointer shrink-0 flex items-center gap-1 ml-auto"
-              title="Limpar todos os pacotes para iniciar um novo dia de entregas"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Novo Dia</span>
-            </button>
-          )}
         </div>
       </div>
 
-      {/* 2. BARRA DE ENTRADA RELÂMPAGO (ESPECIALIZADA PARA MANILHA OU RUA NORMAL) */}
-      <div className={`rounded-2xl p-3 text-white shadow-md space-y-2.5 ${
-        isManilhaActive
-          ? 'bg-gradient-to-r from-amber-600 via-amber-700 to-amber-800 border border-amber-500/40'
-          : 'bg-gradient-to-r from-emerald-600 to-teal-700'
-      }`}>
+      {/* 2. ÁREA DE CADASTRO E MODO RÁPIDO (LIMPO E ERGONÔMICO) */}
+      <div className="bg-slate-900/95 backdrop-blur-md rounded-2xl p-3.5 sm:p-4 border border-slate-800/90 shadow-md space-y-3">
+        {/* Cabeçalho da Seção de Cadastro */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <Zap className="w-4 h-4 text-amber-300 fill-amber-300" />
-            <span className="text-xs font-black tracking-wide">
-              {isManilhaActive
-                ? '🏗️ Cadastro na Manilha (Escolha a Rua/Letra + Nº)'
-                : `📍 Cadastro na ${activeStreet}`}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-black tracking-wide text-slate-200">
+              {isManilhaActive ? '🏗️ Entrada na Manilha' : `📍 Nova Entrega na ${activeStreet}`}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setIsBatchModalOpen(true)}
-              className="px-2.5 py-1 bg-white/15 hover:bg-white/25 rounded-lg text-[10px] font-black flex items-center gap-1 cursor-pointer transition-all border border-white/20"
-              title="Digitar ou colar vários pacotes de uma vez"
-            >
-              <ListPlus className="w-3 h-3 text-amber-300" />
-              <span>Lote / Vários</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setIsBatchModalOpen(true)}
+            className="h-8 px-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded-lg text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-all border border-slate-700/70"
+            title="Digitar ou colar vários pacotes de uma vez"
+          >
+            <ListPlus className="w-3.5 h-3.5 text-amber-400" />
+            <span>Em Lote</span>
+          </button>
         </div>
 
-        {/* SELETOR DE SUB-RUA EXCLUSIVO DA MANILHA (VIAS PRINCIPAIS + LETRAS A A K) */}
+        {/* SELETOR DE SUB-RUA EXCLUSIVO DA MANILHA */}
         {isManilhaActive && (
-          <div className="space-y-1.5 bg-black/25 p-2 rounded-xl border border-white/10">
-            <span className="text-[10px] font-black uppercase text-amber-200 block">
-              Selecione a Rua da Manilha:
+          <div className="space-y-2 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+            <span className="text-[10px] font-black uppercase text-amber-300/90 block">
+              Selecione a Sub-Rua da Manilha:
             </span>
 
             {/* Vias Centrais */}
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
               {MANILHA_SUB_STREETS.filter((s) => s.type === 'principal').map((st) => (
                 <button
                   key={st.id}
@@ -758,10 +758,10 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                     setManilhaSubStreet(st.name);
                     quickInputRef.current?.focus();
                   }}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer shrink-0 ${
+                  className={`h-8 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer shrink-0 ${
                     manilhaSubStreet === st.name
-                      ? 'bg-amber-300 text-slate-950 shadow-xs'
-                      : 'bg-white/20 hover:bg-white/30 text-white'
+                      ? 'bg-amber-400 text-slate-950 shadow-sm font-black'
+                      : 'bg-slate-800/80 hover:bg-slate-750 text-slate-300 border border-slate-700/50'
                   }`}
                 >
                   {st.name} ({st.shortLabel})
@@ -770,8 +770,8 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
             </div>
 
             {/* Travessas de Letras (Ordem Alfabética: A a K) */}
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5">
-              <span className="text-[10px] font-black text-amber-200/90 shrink-0">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
+              <span className="text-[10px] font-black text-slate-400 shrink-0">
                 Letras:
               </span>
               {MANILHA_SUB_STREETS.filter((s) => s.type === 'letra').map((st) => (
@@ -782,10 +782,10 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                     setManilhaSubStreet(st.name);
                     quickInputRef.current?.focus();
                   }}
-                  className={`w-7 h-7 rounded-lg text-xs font-black transition-all cursor-pointer shrink-0 flex items-center justify-center ${
+                  className={`w-8 h-8 rounded-lg text-xs font-black transition-all cursor-pointer shrink-0 flex items-center justify-center ${
                     manilhaSubStreet === st.name
-                      ? 'bg-amber-300 text-slate-950 shadow-xs scale-105'
-                      : 'bg-white/20 hover:bg-white/30 text-white'
+                      ? 'bg-amber-400 text-slate-950 shadow-sm scale-105'
+                      : 'bg-slate-800/80 hover:bg-slate-750 text-slate-300 border border-slate-700/50'
                   }`}
                   title={st.name}
                 >
@@ -797,18 +797,18 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         )}
 
         {/* ABAS DO CADASTRO: MODO RÁPIDO (CASAS SALVAS) vs DIGITAR NOVO */}
-        <div className="flex items-center gap-1.5 bg-black/25 p-1 rounded-xl">
+        <div className="grid grid-cols-2 p-1 bg-slate-950/70 rounded-xl border border-slate-800/80 gap-1">
           <button
             type="button"
             onClick={() => setCadastroTab('rapido')}
-            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`h-10 px-3 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 touch-manipulation ${
               cadastroTab === 'rapido'
-                ? 'bg-amber-400 text-slate-950 shadow-xs'
-                : 'text-white/80 hover:text-white hover:bg-white/10'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
             }`}
           >
             <Zap className="w-3.5 h-3.5 fill-current" />
-            <span>⚡ Modo Rápido (Casas Salvas)</span>
+            <span>⚡ Casas Salvas</span>
           </button>
 
           <button
@@ -817,48 +817,50 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
               setCadastroTab('digitar');
               setTimeout(() => quickInputRef.current?.focus(), 80);
             }}
-            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`h-10 px-3 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 touch-manipulation ${
               cadastroTab === 'digitar'
-                ? 'bg-white text-slate-950 shadow-xs'
-                : 'text-white/80 hover:text-white hover:bg-white/10'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
             }`}
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
             <span>✍️ Digitar Novo</span>
           </button>
         </div>
 
         {/* CONTEÚDO DINÂMICO: MODO RÁPIDO (SELEÇÃO DIRETA) OU FORMULÁRIO DE DIGITAÇÃO */}
         {cadastroTab === 'rapido' ? (
-          <QuickMemoryManager
-            streetName={activeStreet}
-            isManilhaActive={isManilhaActive}
-            manilhaSubStreet={manilhaSubStreet}
-            currentDeliveries={deliveries}
-            onAddDelivery={(newDel) => {
-              onAddDelivery(newDel);
-              setFilterStatus('todos');
-              setSearchQuery('');
-            }}
-            onSelectForManualAdd={(houseNum, comp, subStreet) => {
-              setQuickHouseNumber(houseNum);
-              if (comp) setQuickComplement(comp);
-              if (subStreet) setManilhaSubStreet(subStreet);
-              setCadastroTab('digitar');
-              setTimeout(() => {
-                quickComplementInputRef.current?.focus();
-              }, 100);
-            }}
-            onToast={(msg) => {
-              setQuickToast(msg);
-              setTimeout(() => setQuickToast(null), 2500);
-            }}
-          />
+          <div className="pt-1">
+            <QuickMemoryManager
+              streetName={activeStreet}
+              isManilhaActive={isManilhaActive}
+              manilhaSubStreet={manilhaSubStreet}
+              currentDeliveries={deliveries}
+              onAddDelivery={(newDel) => {
+                onAddDelivery(newDel);
+                setFilterStatus('todos');
+                setSearchQuery('');
+              }}
+              onSelectForManualAdd={(houseNum, comp, subStreet) => {
+                setQuickHouseNumber(houseNum);
+                if (comp) setQuickComplement(comp);
+                if (subStreet) setManilhaSubStreet(subStreet);
+                setCadastroTab('digitar');
+                setTimeout(() => {
+                  quickComplementInputRef.current?.focus();
+                }, 100);
+              }}
+              onToast={(msg) => {
+                setQuickToast(msg);
+                setTimeout(() => setQuickToast(null), 2500);
+              }}
+            />
+          </div>
         ) : (
-          <form onSubmit={handleQuickAdd} className="space-y-1.5">
-            <div className="flex items-center gap-1.5">
-              {/* Campo de Número da Casa - Foco Rápido */}
-              <div className="w-24 sm:w-28 shrink-0">
+          <form onSubmit={handleQuickAdd} className="space-y-2.5 pt-1">
+            <div className="flex items-center gap-2">
+              {/* Campo de Número da Casa - Foco Primário do Dedo */}
+              <div className="w-28 sm:w-32 shrink-0">
                 <input
                   ref={quickInputRef}
                   type="text"
@@ -866,30 +868,19 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                   value={quickHouseNumber}
                   onChange={(e) => setQuickHouseNumber(e.target.value)}
                   placeholder="Nº Casa"
-                  className="w-full px-2.5 py-2 bg-white text-slate-900 placeholder-slate-400 rounded-xl text-base font-black text-center focus:outline-none focus:ring-2 focus:ring-amber-300 shadow-inner"
+                  className="w-full h-12 px-3 bg-slate-950 text-white placeholder-slate-500 border border-slate-700/80 rounded-xl text-lg font-black text-center focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
 
               {/* Campo de Complemento (Apto, Bloco, etc.) */}
-              <div className="w-28 sm:w-32 shrink-0">
+              <div className="flex-1 min-w-0">
                 <input
                   ref={quickComplementInputRef}
                   type="text"
                   value={quickComplement}
                   onChange={(e) => setQuickComplement(e.target.value)}
-                  placeholder="Compl. (Apto...)"
-                  className="w-full px-2.5 py-2 bg-white/95 text-slate-900 placeholder-slate-400 rounded-xl text-xs font-black text-center focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-300 shadow-inner"
-                />
-              </div>
-
-              {/* Nome do Destinatário Opcional */}
-              <div className="flex-1 min-w-0">
-                <input
-                  type="text"
-                  value={quickClientName}
-                  onChange={(e) => setQuickClientName(e.target.value)}
-                  placeholder="Morador (Opcional)"
-                  className="w-full px-2.5 py-2 bg-white/90 text-slate-900 placeholder-slate-400 rounded-xl text-xs font-bold focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                  placeholder="Compl. (Apto, Bloco...)"
+                  className="w-full h-12 px-3 bg-slate-950 text-white placeholder-slate-500 border border-slate-700/80 rounded-xl text-sm font-bold text-center focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
 
@@ -897,28 +888,42 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
               <button
                 type="button"
                 onClick={toggleQuickVoice}
-                className={`p-2 rounded-xl text-white cursor-pointer transition-all shrink-0 ${
-                  isQuickListening ? 'bg-rose-500 animate-pulse' : 'bg-white/20 hover:bg-white/30'
+                className={`w-12 h-12 rounded-xl flex items-center justify-center cursor-pointer transition-all shrink-0 ${
+                  isQuickListening
+                    ? 'bg-rose-500 text-white animate-pulse'
+                    : 'bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700/80'
                 }`}
                 title="Falar número e complemento por voz"
               >
-                <Mic className="w-4 h-4" />
+                <Mic className="w-5 h-5" />
               </button>
+            </div>
 
-              {/* Botão de Adicionar (Enter) */}
+            {/* Linha 2: Nome do Morador + Botão de Adicionar */}
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <input
+                  type="text"
+                  value={quickClientName}
+                  onChange={(e) => setQuickClientName(e.target.value)}
+                  placeholder="Nome do Morador (Opcional)"
+                  className="w-full h-12 px-3.5 bg-slate-950 text-white placeholder-slate-500 border border-slate-700/80 rounded-xl text-sm font-medium focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
               <button
                 type="submit"
-                className="px-3 py-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-sm cursor-pointer shrink-0 flex items-center gap-1 transition-all"
+                className="h-12 px-5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-sm rounded-xl shadow-md cursor-pointer shrink-0 flex items-center gap-1.5 transition-all touch-manipulation"
                 title="Adicionar Pacote e Salvar na Memória"
               >
-                <Plus className="w-4 h-4" />
-                <span className="font-black">Adicionar</span>
+                <Plus className="w-5 h-5 stroke-[2.5]" />
+                <span>Adicionar</span>
               </button>
             </div>
 
             {/* Chips Rápidos de Complementos Mais Usados */}
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5">
-              <span className="text-[10px] font-black uppercase text-amber-200 shrink-0">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
+              <span className="text-[10px] font-black uppercase text-slate-400 shrink-0">
                 +Compl:
               </span>
               {['Apto ', 'Bloco A', 'Bloco B', 'Casa 1', 'Casa 2', 'Fundos', 'Sobrado'].map((chip) => (
@@ -929,10 +934,10 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                     setQuickComplement(chip);
                     quickComplementInputRef.current?.focus();
                   }}
-                  className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all cursor-pointer shrink-0 ${
+                  className={`h-7 px-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center ${
                     quickComplement.toLowerCase().includes(chip.trim().toLowerCase())
-                      ? 'bg-amber-300 text-slate-950 font-black'
-                      : 'bg-white/15 hover:bg-white/25 text-white border border-white/20'
+                      ? 'bg-emerald-500 text-slate-950 font-black'
+                      : 'bg-slate-800/80 hover:bg-slate-750 text-slate-300 border border-slate-700/60'
                   }`}
                 >
                   {chip.trim()}
@@ -942,7 +947,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                 <button
                   type="button"
                   onClick={() => setQuickComplement('')}
-                  className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold bg-rose-500/80 hover:bg-rose-600 text-white shrink-0"
+                  className="h-7 px-2 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/30 shrink-0"
                   title="Limpar complemento"
                 >
                   ✕
@@ -954,60 +959,60 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
 
         {/* Toast Flutuante de Sucesso Rápido */}
         {quickToast && (
-          <div className="text-[11px] font-black text-amber-200 bg-black/30 px-2.5 py-1 rounded-lg text-center animate-fadeIn">
+          <div className="text-xs font-extrabold text-emerald-300 bg-slate-950 px-3 py-1.5 rounded-xl border border-emerald-500/30 text-center animate-fadeIn shadow-sm">
             {quickToast}
           </div>
         )}
       </div>
 
       {/* 3. FILTRO, BUSCA E ORDENAÇÃO DINÂMICA */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl p-2.5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2 transition-colors">
+      <div className="bg-slate-900/95 backdrop-blur-md rounded-2xl p-3 border border-slate-800/80 shadow-sm space-y-2.5 transition-colors">
         {/* Campo de Busca Rápida */}
         <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={
               isManilhaActive
-                ? 'Buscar por Rua (Ex: Rua B, Leão XIII), número ou morador...'
+                ? 'Buscar por Rua (Ex: Rua B), nº ou morador...'
                 : 'Buscar por Nº casa, morador ou pacote...'
             }
-            className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-emerald-500 font-bold"
+            className="w-full h-11 pl-10 pr-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-bold"
           />
         </div>
 
         {/* Tabs de Filtro e Seletor de Ordenação */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-1.5 pt-0.5">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-0.5">
           {/* Status Tabs */}
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar text-xs font-black">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs font-bold">
             <button
               onClick={() => setFilterStatus('todos')}
-              className={`px-2.5 py-1 rounded-xl cursor-pointer shrink-0 transition-all ${
+              className={`h-9 px-3 rounded-xl cursor-pointer shrink-0 transition-all ${
                 filterStatus === 'todos'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  ? 'bg-slate-100 text-slate-950 font-black shadow-sm'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-750 border border-slate-700/50'
               }`}
             >
               Todos ({totalCount})
             </button>
             <button
               onClick={() => setFilterStatus('pendente')}
-              className={`px-2.5 py-1 rounded-xl cursor-pointer shrink-0 transition-all ${
+              className={`h-9 px-3 rounded-xl cursor-pointer shrink-0 transition-all ${
                 filterStatus === 'pendente'
-                  ? 'bg-amber-400 text-slate-950 shadow-xs font-black'
-                  : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200/60'
+                  ? 'bg-amber-400 text-slate-950 font-black shadow-sm'
+                  : 'bg-slate-800 text-amber-400 hover:bg-slate-750 border border-slate-700/50'
               }`}
             >
               Pendentes ({pendingCount})
             </button>
             <button
               onClick={() => setFilterStatus('entregue')}
-              className={`px-2.5 py-1 rounded-xl cursor-pointer shrink-0 transition-all ${
+              className={`h-9 px-3 rounded-xl cursor-pointer shrink-0 transition-all ${
                 filterStatus === 'entregue'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200/60'
+                  ? 'bg-emerald-500 text-slate-950 font-black shadow-sm'
+                  : 'bg-slate-800 text-emerald-400 hover:bg-slate-750 border border-slate-700/50'
               }`}
             >
               Entregues ({deliveredCount})
@@ -1015,10 +1020,10 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
             {insucessoCount > 0 && (
               <button
                 onClick={() => setFilterStatus('insucesso')}
-                className={`px-2.5 py-1 rounded-xl cursor-pointer shrink-0 transition-all ${
+                className={`h-9 px-3 rounded-xl cursor-pointer shrink-0 transition-all ${
                   filterStatus === 'insucesso'
-                    ? 'bg-rose-600 text-white shadow-xs'
-                    : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200/60'
+                    ? 'bg-rose-600 text-white font-black shadow-sm'
+                    : 'bg-slate-800 text-rose-400 hover:bg-slate-750 border border-slate-700/50'
                 }`}
               >
                 Falhas ({insucessoCount})
@@ -1027,20 +1032,20 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           </div>
 
           {/* Seletor de Ordenação */}
-          <div className="flex items-center gap-1 self-end sm:self-auto">
+          <div className="flex items-center gap-1.5 self-end sm:self-auto">
             <button
               onClick={toggleSortDirection}
-              className="p-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-700 cursor-pointer text-xs font-bold flex items-center gap-1 border border-slate-200"
+              className="h-9 px-2.5 bg-slate-800 hover:bg-slate-750 rounded-xl text-slate-300 cursor-pointer text-xs font-bold flex items-center gap-1 border border-slate-700/60"
               title="Inverter ordem dos números"
             >
               {sortBy === 'numero_asc' ? (
                 <>
-                  <ArrowUp className="w-3.5 h-3.5 text-emerald-600" />
+                  <ArrowUp className="w-3.5 h-3.5 text-emerald-400" />
                   <span className="text-[10px]">1 → 100</span>
                 </>
               ) : sortBy === 'numero_desc' ? (
                 <>
-                  <ArrowDown className="w-3.5 h-3.5 text-emerald-600" />
+                  <ArrowDown className="w-3.5 h-3.5 text-emerald-400" />
                   <span className="text-[10px]">100 → 1</span>
                 </>
               ) : (
@@ -1051,10 +1056,10 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
-              className="px-2 py-1.5 bg-slate-100 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 focus:outline-none cursor-pointer"
+              className="h-9 px-2.5 bg-slate-800 border border-slate-700/60 rounded-xl text-xs font-bold text-slate-200 focus:outline-none cursor-pointer"
             >
-              <option value="numero_asc">Nº Casa (Menor → Maior)</option>
-              <option value="numero_desc">Nº Casa (Maior → Menor)</option>
+              <option value="numero_asc">Nº Casa (1 → 100)</option>
+              <option value="numero_desc">Nº Casa (100 → 1)</option>
               <option value="pendentes_primeiro">Pendentes Primeiro</option>
               <option value="hora_desc">Mais Recentes</option>
               <option value="codigo">Código Pacote</option>
@@ -1064,32 +1069,32 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
       </div>
 
       {/* 4. MODOS DE VISUALIZAÇÃO */}
-      <div className="flex items-center justify-between px-1">
-        <div className="flex items-center gap-1.5">
+      <div className="px-0.5">
+        <div className="grid grid-cols-2 p-1 bg-slate-900/90 rounded-xl border border-slate-800/80 gap-1 shadow-sm">
           <button
             onClick={() => setViewMode('grouped')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`h-9 px-2.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 touch-manipulation ${
               viewMode === 'grouped'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             <span>
               {isManilhaActive
-                ? `🏗️ Por Ruas da Manilha (${manilhaSubGroups.length})`
-                : `🏢 Agrupado p/ Casas (${groupedHouses.length})`}
+                ? `🏗️ Ruas Manilha (${manilhaSubGroups.length})`
+                : `🏢 Por Casas (${groupedHouses.length})`}
             </span>
           </button>
 
           <button
             onClick={() => setViewMode('individual')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
+            className={`h-9 px-2.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 touch-manipulation ${
               viewMode === 'individual'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <span>📦 Lista Individual ({sortedDeliveries.length})</span>
+            <span>📦 Individual ({sortedDeliveries.length})</span>
           </button>
         </div>
       </div>
@@ -1249,22 +1254,15 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           onConfirmDelivery={(updated) => {
             onUpdateDelivery(updated);
             setSelectedForDelivery(null);
-            if (updated.status === 'entregue' || updated.status === 'concluido') {
-              triggerReward(1, updated.nome_destinatario);
-            }
           }}
           onSaveDelivery={(updated) => {
             onUpdateDelivery(updated);
             setSelectedForDelivery(null);
-            if (updated.status === 'entregue' || updated.status === 'concluido') {
-              triggerReward(1, updated.nome_destinatario);
-            }
           }}
           onConfirmDelivered={() => {
             if (selectedForDelivery) {
               const updated = { ...selectedForDelivery, status: 'entregue' as const };
               onUpdateDelivery(updated);
-              triggerReward(1, updated.nome_destinatario);
             }
             setSelectedForDelivery(null);
           }}

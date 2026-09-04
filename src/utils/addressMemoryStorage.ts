@@ -70,19 +70,88 @@ export const detectAddressType = (
   return existingType || 'casa';
 };
 
+const DEFAULT_SEEDED_MEMORY: Record<string, SavedAddressNumber[]> = {
+  'rua carlos seidl': [
+    {
+      street: 'Rua Carlos Seidl',
+      houseNumber: '21',
+      type: 'casa',
+      residents: [
+        { id: 'res_21_1', name: 'Antônio Silva', complement: 'Casa Principal', timesDelivered: 5 },
+        { id: 'res_21_2', name: 'Carla Silva', complement: 'Fundos', timesDelivered: 2 },
+      ],
+      lastUpdated: new Date().toISOString(),
+    },
+    {
+      street: 'Rua Carlos Seidl',
+      houseNumber: '23',
+      type: 'vila',
+      residents: [
+        { id: 'res_23_1', name: 'Marcos Vinicius', complement: 'Casa 1', timesDelivered: 8 },
+        { id: 'res_23_2', name: 'Juliana Paes', complement: 'Casa 2', timesDelivered: 3 },
+      ],
+      lastUpdated: new Date().toISOString(),
+    },
+    {
+      street: 'Rua Carlos Seidl',
+      houseNumber: '34',
+      type: 'casa',
+      residents: [
+        { id: 'res_34_1', name: 'Roberto Carlos', complement: 'Térreo', timesDelivered: 4 },
+      ],
+      lastUpdated: new Date().toISOString(),
+    },
+    {
+      street: 'Rua Carlos Seidl',
+      houseNumber: '142',
+      type: 'vila',
+      residents: [
+        { id: 'res_142_1', name: 'Maria Oliveira Santos', complement: 'Casa 2', timesDelivered: 12 },
+        { id: 'res_142_2', name: 'José Carlos', complement: 'Portaria', timesDelivered: 9 },
+      ],
+      lastUpdated: new Date().toISOString(),
+    },
+  ],
+  'manilha': [
+    {
+      street: 'Manilha',
+      subStreet: 'Rua Leão XIII',
+      houseNumber: '15',
+      type: 'casa',
+      residents: [
+        { id: 'res_m_15', name: 'Dona Neide', complement: 'Sobrado', timesDelivered: 6 },
+      ],
+      lastUpdated: new Date().toISOString(),
+    },
+    {
+      street: 'Manilha',
+      subStreet: 'Rua A',
+      houseNumber: '8',
+      type: 'casa',
+      residents: [
+        { id: 'res_m_8', name: 'Valter Silva', complement: 'Térreo', timesDelivered: 3 },
+      ],
+      lastUpdated: new Date().toISOString(),
+    },
+  ],
+};
+
 // Carrega todas as ruas memorizadas
 export const loadAllAddressMemory = (): Record<string, SavedAddressNumber[]> => {
   try {
     const raw = localStorage.getItem(MEMORY_STORAGE_KEY);
-    if (!raw) return {};
+    if (!raw) {
+      saveAllAddressMemory(DEFAULT_SEEDED_MEMORY);
+      return DEFAULT_SEEDED_MEMORY;
+    }
     const parsed = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null) {
+    if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
       return parsed;
     }
   } catch (err) {
     console.warn('Erro ao ler memória de endereços:', err);
   }
-  return {};
+  return DEFAULT_SEEDED_MEMORY;
 };
 
 // Salva todo o banco no LocalStorage

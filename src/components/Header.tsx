@@ -9,12 +9,14 @@ interface HeaderProps {
   activeTab?: 'ruas' | 'resumo' | 'associacao';
   onTabChange?: (tab: 'ruas' | 'resumo' | 'associacao') => void;
   onOpenStreetPicker?: () => void;
+  onOpenDailyStreetPicker?: () => void;
   onOpenAddStreet?: () => void;
   pendingCount: number;
   totalCount: number;
   deliveredCount: number;
   insucessoCount?: number;
   totalAllDeliveries?: number;
+  coinsToday?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,10 +25,12 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleTheme,
   activeTab = 'ruas',
   onTabChange,
+  onOpenDailyStreetPicker,
   pendingCount,
   totalCount,
   deliveredCount,
   insucessoCount = 0,
+  coinsToday = 0,
 }) => {
   return (
     <header className="bg-slate-900 dark:bg-slate-950 text-white sticky top-0 z-30 shadow-sm border-b border-slate-800 transition-colors duration-200">
@@ -51,6 +55,29 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* BADGE DE MOEDAS DE OURO DO DIA (2 MOEDAS POR PACOTE ENTREGUE) */}
+            <div
+              className="flex items-center gap-1 bg-gradient-to-r from-amber-500/20 to-yellow-500/10 border border-amber-400/40 text-amber-300 px-2 py-1 rounded-xl shrink-0 shadow-xs cursor-default select-none"
+              title={`Saldo do Dia: ${coinsToday} moedas de ouro (2 moedas por pacote entregue)`}
+            >
+              <span className="text-xs leading-none animate-pulse">🪙</span>
+              <span className="text-xs font-black text-amber-200">{coinsToday}</span>
+              <span className="hidden xs:inline text-[9px] uppercase font-black tracking-tight text-amber-400/90">moedas</span>
+            </div>
+
+            {/* BOTÃO QUAL AS RUAS DE HOJE (DO WIREFRAME) */}
+            {onOpenDailyStreetPicker && (
+              <button
+                type="button"
+                onClick={onOpenDailyStreetPicker}
+                className="flex items-center gap-1 px-2 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-black cursor-pointer touch-manipulation transition-all active:scale-95 shrink-0"
+                title="Qual as ruas de hoje? Abrir seletor 3x3 de ruas da rota"
+              >
+                <span>🗺️</span>
+                <span className="hidden sm:inline">Ruas de Hoje</span>
+              </button>
+            )}
+
             {/* Contador de Status */}
             <div className="flex items-center gap-1.5 bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-xl shrink-0">
               {pendingCount > 0 ? (

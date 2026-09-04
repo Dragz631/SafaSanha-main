@@ -180,6 +180,24 @@ export const StreetCompletedModal: React.FC<StreetCompletedModalProps> = ({
             </div>
           </div>
 
+          {/* RECOMPENSA DE MOEDAS DESTA RUA */}
+          <div className="bg-gradient-to-r from-amber-500/20 via-yellow-500/15 to-amber-500/10 border-2 border-amber-400/50 p-2.5 rounded-2xl flex items-center justify-between shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-xl animate-bounce">🪙</span>
+              <div>
+                <span className="text-xs font-black text-amber-950 dark:text-amber-200 block">
+                  +{deliveredCount * 2} Moedas de Ouro Conquistadas!
+                </span>
+                <span className="text-[10px] text-amber-800 dark:text-amber-300/80 font-medium">
+                  2 moedas adicionadas por cada pacote entregue nesta rua
+                </span>
+              </div>
+            </div>
+            <span className="bg-amber-400 text-slate-950 font-black text-xs px-2.5 py-1 rounded-xl shadow-xs">
+              +{deliveredCount * 2} 🪙
+            </span>
+          </div>
+
           {/* MENSAGEM MOTIVACIONAL DO OBJETIVO DO DIA */}
           <div className="bg-gradient-to-r from-amber-50 to-amber-100/70 dark:from-amber-950/40 dark:to-slate-900 p-3.5 rounded-2xl border border-amber-300 dark:border-amber-700/60 text-slate-900 dark:text-slate-100 space-y-1">
             <div className="flex items-center gap-1.5 text-amber-800 dark:text-amber-300">

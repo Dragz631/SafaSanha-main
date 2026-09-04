@@ -108,6 +108,17 @@ export const CloseDayModal: React.FC<CloseDayModalProps> = ({
             <p className="text-[11px] text-emerald-900 leading-relaxed">
               Estes <strong>{deliveredList.length} pacotes</strong> serão gravados permanentemente no seu Histórico com a hora exata da entrega, quem recebeu e rastro temporal como <strong>prova definitiva antiacareação</strong>.
             </p>
+
+            {/* Moedas de Ouro do Dia */}
+            <div className="flex items-center justify-between bg-amber-100/80 border border-amber-300 rounded-xl px-3 py-1.5 text-xs font-black text-amber-950">
+              <span className="flex items-center gap-1.5">
+                <span>🪙</span>
+                <span>Moedas de Ouro Ganhas Hoje:</span>
+              </span>
+              <span className="bg-amber-400 text-slate-950 px-2 py-0.5 rounded-lg">
+                +{deliveredList.length * 2} moedas
+              </span>
+            </div>
           </div>
 
           {/* Card dos Pacotes Não Entregues */}

@@ -3,7 +3,69 @@ import { DeliveryData, CompletedDayRecord, DeliveryTimelineEvent } from '../type
 export const HISTORY_STORAGE_KEY = 'logiscan_completed_history_v1';
 
 /**
+ * Consolida registros históricos para que NUNCA haja mais de um card para a mesma data (ex: múltiplos dia 03/09).
+ * Se houver dias repetidos no localStorage, mescla as entregas sem duplicação de pacotes.
+ */
+export const consolidateHistoryRecords = (records: CompletedDayRecord[]): CompletedDayRecord[] => {
+  const map = new Map<string, CompletedDayRecord>();
+
+  records.forEach((rec) => {
+    // Chave única pela data de referência (YYYY-MM-DD)
+    const refDate = rec.data_referencia || (rec.data_fechamento ? rec.data_fechamento.split('T')[0] : 'sem_data');
+
+    if (!map.has(refDate)) {
+      map.set(refDate, {
+        ...rec,
+        id_dia: `dia_${refDate}`,
+        data_referencia: refDate,
+      });
+    } else {
+      const existing = map.get(refDate)!;
+
+      // Mescla entregas sem duplicar pacotes por id_entrega ou codigo_pacote
+      const deliveryMap = new Map<string, DeliveryData>();
+      (existing.entregas || []).forEach((d) => deliveryMap.set(d.id_entrega || d.codigo_pacote, d));
+      (rec.entregas || []).forEach((d) => deliveryMap.set(d.id_entrega || d.codigo_pacote, d));
+      const mergedDeliveries = Array.from(deliveryMap.values());
+
+      // Recalcula resumo por ruas
+      const streetCount = new Map<string, number>();
+      mergedDeliveries.forEach((d) => {
+        const rua = d.sub_rua_manilha ? `Manilha (${d.sub_rua_manilha})` : d.endereco_rua || 'Caju';
+        streetCount.set(rua, (streetCount.get(rua) || 0) + 1);
+      });
+      const mergedResumoRuas = Array.from(streetCount.entries()).map(([nome_rua, qtd_entregues]) => ({
+        nome_rua,
+        qtd_entregues,
+      }));
+
+      const newerDate =
+        new Date(rec.data_fechamento || 0).getTime() > new Date(existing.data_fechamento || 0).getTime()
+          ? rec.data_fechamento
+          : existing.data_fechamento;
+
+      map.set(refDate, {
+        ...existing,
+        id_dia: `dia_${refDate}`,
+        data_referencia: refDate,
+        data_fechamento: newerDate,
+        total_entregues: mergedDeliveries.length,
+        total_remanejados: Math.max(existing.total_remanejados || 0, rec.total_remanejados || 0),
+        total_devolvidos: Math.max(existing.total_devolvidos || 0, rec.total_devolvidos || 0),
+        entregas: mergedDeliveries,
+        resumo_ruas: mergedResumoRuas,
+      });
+    }
+  });
+
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.data_referencia).getTime() - new Date(a.data_referencia).getTime()
+  );
+};
+
+/**
  * Carrega todos os registros de dias concluídos salvos no histórico permanente
+ * (Garante deduplicação automática de dias iguais)
  */
 export const loadCompletedHistory = (): CompletedDayRecord[] => {
   try {
@@ -11,7 +73,11 @@ export const loadCompletedHistory = (): CompletedDayRecord[] => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        return parsed.sort((a, b) => new Date(b.data_fechamento).getTime() - new Date(a.data_fechamento).getTime());
+        const consolidated = consolidateHistoryRecords(parsed);
+        if (consolidated.length !== parsed.length) {
+          saveCompletedHistory(consolidated);
+        }
+        return consolidated;
       }
     }
   } catch (err) {
@@ -163,21 +229,56 @@ export const closeCurrentDeliveryDay = (params: {
     qtd_entregues,
   }));
 
-  // Cria o registro imutável do dia concluído
-  const completedDay: CompletedDayRecord = {
-    id_dia: `dia_${dateRef}_${Date.now()}`,
-    data_referencia: dateRef,
-    data_fechamento: now.toISOString(),
-    total_entregues: deliveredList.length,
-    total_remanejados: rolloverNonDeliveredToNextDay ? nonDeliveredList.length : 0,
-    total_devolvidos: rolloverNonDeliveredToNextDay ? 0 : nonDeliveredList.length,
-    entregas: deliveredList,
-    resumo_ruas,
-  };
-
-  // Salva no histórico permanente
+  // Salva no histórico permanente (se já existir o mesmo dia, mescla as entregas para nunca ter dias duplicados)
   const existingHistory = loadCompletedHistory();
-  const updatedHistory = [completedDay, ...existingHistory.filter((h) => h.id_dia !== completedDay.id_dia)];
+  const existingDay = existingHistory.find((h) => h.data_referencia === dateRef);
+
+  let completedDay: CompletedDayRecord;
+
+  if (existingDay) {
+    const deliveryMap = new Map<string, DeliveryData>();
+    (existingDay.entregas || []).forEach((d) => deliveryMap.set(d.id_entrega || d.codigo_pacote, d));
+    deliveredList.forEach((d) => deliveryMap.set(d.id_entrega || d.codigo_pacote, d));
+    const mergedDeliveries = Array.from(deliveryMap.values());
+
+    const streetCount = new Map<string, number>();
+    mergedDeliveries.forEach((d) => {
+      const rua = d.sub_rua_manilha ? `Manilha (${d.sub_rua_manilha})` : d.endereco_rua || 'Caju';
+      streetCount.set(rua, (streetCount.get(rua) || 0) + 1);
+    });
+    const mergedResumoRuas = Array.from(streetCount.entries()).map(([nome_rua, qtd_entregues]) => ({
+      nome_rua,
+      qtd_entregues,
+    }));
+
+    completedDay = {
+      ...existingDay,
+      id_dia: `dia_${dateRef}`,
+      data_referencia: dateRef,
+      data_fechamento: now.toISOString(),
+      total_entregues: mergedDeliveries.length,
+      total_remanejados: rolloverNonDeliveredToNextDay ? nonDeliveredList.length : existingDay.total_remanejados,
+      total_devolvidos: rolloverNonDeliveredToNextDay ? 0 : nonDeliveredList.length,
+      entregas: mergedDeliveries,
+      resumo_ruas: mergedResumoRuas,
+    };
+  } else {
+    completedDay = {
+      id_dia: `dia_${dateRef}`,
+      data_referencia: dateRef,
+      data_fechamento: now.toISOString(),
+      total_entregues: deliveredList.length,
+      total_remanejados: rolloverNonDeliveredToNextDay ? nonDeliveredList.length : 0,
+      total_devolvidos: rolloverNonDeliveredToNextDay ? 0 : nonDeliveredList.length,
+      entregas: deliveredList,
+      resumo_ruas,
+    };
+  }
+
+  const updatedHistory = [
+    completedDay,
+    ...existingHistory.filter((h) => h.data_referencia !== dateRef && h.id_dia !== completedDay.id_dia),
+  ];
   saveCompletedHistory(updatedHistory);
 
   // Prepara os pacotes que vão para o dia seguinte com histórico mantido

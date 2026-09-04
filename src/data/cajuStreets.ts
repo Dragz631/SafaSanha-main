@@ -9,6 +9,33 @@ export const CAJU_PRIMARY_AREAS = [
   'Rua Monsenhor Manuel Gomes',
   'Rua Tavares Guerra',
   'Manilha', // Setor unificado do Parque Nossa Senhora da Penha
+  'Quinta do Caju', // Setor Quinta do Caju (Hub com travessas e becos)
+];
+
+// Cards do Wireframe 3x3 de Seleção Diária
+export interface DailyStreetCardItem {
+  id: string;
+  streetName: string;
+  label: string;
+  type: 'street' | 'hub' | 'associacao';
+  shortDescription?: string;
+}
+
+export const DAILY_STREET_CARDS: DailyStreetCardItem[] = [
+  // Linha 1 do wireframe
+  { id: 'carlos_seidl', streetName: 'Rua Carlos Seidl', label: 'rua carlos seidl', type: 'street' },
+  { id: 'manilha', streetName: 'Manilha', label: 'manilha', type: 'hub', shortDescription: 'Pq. N. Sra. da Penha' },
+  { id: 'general_sampaio', streetName: 'Rua General Sampaio', label: 'rua general sampaio', type: 'street' },
+
+  // Linha 2 do wireframe
+  { id: 'general_gurjao', streetName: 'Rua General Gurjão', label: 'rua general gurjao', type: 'street' },
+  { id: 'quinta_do_caju', streetName: 'Quinta do Caju', label: 'quinta do caju', type: 'hub', shortDescription: 'Travessas e Acessos' },
+  { id: 'praia_do_caju', streetName: 'Rua Praia do Caju', label: 'rua praia do caju', type: 'street' },
+
+  // Linha 3 do wireframe
+  { id: 'tavares_guerra', streetName: 'Rua Tavares Guerra', label: 'rua tavares guerra', type: 'street' },
+  { id: 'monsenhor_manuel_gomes', streetName: 'Rua Monsenhor Manuel Gomes', label: 'rua monsenhor manoel gomes', type: 'street' },
+  { id: 'associacoes', streetName: 'Associações', label: 'associaçoes', type: 'associacao', shortDescription: 'Associações Comunitárias' },
 ];
 
 // Sub-ruas estruturadas dentro da Manilha (Parque Nossa Senhora da Penha • Caju)
@@ -158,6 +185,24 @@ export const getStreetInfo = (streetName: string) => {
       category: 'manilha_sub',
       badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
       description: `${manilhaSub.role} (Setor Manilha • Caju)`,
+    };
+  }
+
+  if (clean === 'quinta do caju' || clean.includes('quinta')) {
+    return {
+      sector: 'Caju • Quinta do Caju',
+      category: 'quinta_hub',
+      badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+      description: 'Setor Quinta do Caju (Hub de travessas e acessos locais)',
+    };
+  }
+
+  if (clean === 'associações' || clean === 'associacoes' || clean.includes('associa')) {
+    return {
+      sector: 'Caju • Associações',
+      category: 'associacao',
+      badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+      description: 'Entregas especiais em associações comunitárias do Caju',
     };
   }
 
