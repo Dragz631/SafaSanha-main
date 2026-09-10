@@ -11,6 +11,7 @@ import { DeliveryWhatsAppModal } from './components/DeliveryWhatsAppModal';
 import { DeliveryData } from './types';
 import { INITIAL_DELIVERIES } from './data/sampleData';
 import { CAJU_PRIMARY_AREAS, isManilhaDelivery } from './data/cajuStreets';
+import { syncStreetsPlan } from './services/safasanhasoClient';
 
 // Função para normalizar e remover duplicatas na lista de ruas
 const normalizeStreetList = (list: string[]): string[] => {
@@ -143,6 +144,20 @@ export default function App() {
       localStorage.setItem(STREETS_STORAGE_KEY, JSON.stringify(savedStreets));
     } catch (_e) {}
   }, [savedStreets]);
+
+  // Sincroniza contagem de pacotes por rua com SafaSanhaso quando entregas mudam
+  useEffect(() => {
+    if (savedStreets.length === 0) return;
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const streetsMap: Record<string, { total_packages: number }> = {};
+      savedStreets.forEach((street) => {
+        const count = deliveries.filter(d => (d.endereco_rua || '').toLowerCase() === street.toLowerCase()).length;
+        streetsMap[street] = { total_packages: count };
+      });
+      syncStreetsPlan(todayStr, streetsMap).catch(() => {});
+    } catch (_e) {}
+  }, [deliveries, savedStreets]);
 
   // Sincroniza ruas dos pacotes carregados para a lista da região de forma segura e sem duplicar
   useEffect(() => {
@@ -283,6 +298,12 @@ export default function App() {
     try {
       const todayStr = new Date().toISOString().slice(0, 10);
       localStorage.setItem(DAILY_CONFIRMED_DATE_KEY, todayStr);
+      // Sincroniza plano de ruas com SafaSanhaso
+      const streetsMap: Record<string, { total_packages: number; confirmed_packages?: number; is_last_in_group?: boolean }> = {};
+      selected.forEach((street) => {
+        streetsMap[street] = { total_packages: 0, confirmed_packages: 0 };
+      });
+      syncStreetsPlan(todayStr, streetsMap).catch(() => {});
     } catch (_e) {}
   };
 
