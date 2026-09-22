@@ -95,18 +95,18 @@ export const ManilhaSubStreetCard: React.FC<ManilhaSubStreetCardProps> = ({
 
   return (
     <div
-      className={`rounded-3xl border-2 transition-all duration-200 overflow-hidden shadow-sm space-y-0 ${
+      className={`rounded-2xl border transition-all duration-200 overflow-hidden shadow-sm space-y-0 ${
         isCompleted
-          ? 'bg-emerald-50/40 border-emerald-400'
+          ? 'bg-emerald-500/5 border-emerald-500/40'
           : insucessoCount > 0
-          ? 'bg-amber-50/20 border-amber-300'
-          : 'bg-white border-amber-400/80 shadow-md shadow-amber-500/5'
+          ? 'bg-amber-500/5 border-amber-500/30'
+          : 'bg-slate-900 border-amber-400/40'
       }`}
     >
       {/* CABEÇALHO DO CARD DA SUB-RUA NA MANILHA */}
       <div
         onClick={() => setIsExpanded(!isExpanded)}
-        className="p-3.5 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between gap-2.5 cursor-pointer select-none"
+        className="p-3.5 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 text-white flex items-center justify-between gap-2.5 cursor-pointer select-none"
       >
         <div className="flex items-center gap-3 min-w-0">
           {/* Badge de Ícone da Sub-Rua */}
@@ -170,9 +170,9 @@ export const ManilhaSubStreetCard: React.FC<ManilhaSubStreetCardProps> = ({
       </div>
 
       {/* BARRA DE PROGRESSO & AÇÕES RÁPIDAS DA SUB-RUA */}
-      <div className="p-2.5 bg-slate-50 border-b border-slate-200/90 flex items-center justify-between gap-2">
+      <div className="p-2.5 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between gap-2">
         {/* Barra de Progresso */}
-        <div className="flex-1 bg-slate-200 h-2 rounded-full overflow-hidden flex">
+        <div className="flex-1 bg-slate-800 h-2 rounded-full overflow-hidden flex">
           <div
             className="bg-emerald-500 h-full transition-all duration-300"
             style={{ width: `${pct}%` }}
@@ -188,7 +188,7 @@ export const ManilhaSubStreetCard: React.FC<ManilhaSubStreetCardProps> = ({
         {/* Botão de Entregar Todos da Sub-Rua */}
         <button
           onClick={handleDeliverAllClick}
-          className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-all"
+          className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shrink-0 transition-all"
         >
           <Share2 className="w-3.5 h-3.5" />
           <span>Zap da {subStreetDef.name}</span>
@@ -199,17 +199,17 @@ export const ManilhaSubStreetCard: React.FC<ManilhaSubStreetCardProps> = ({
           className={`p-2 rounded-xl border text-xs font-bold flex items-center justify-center cursor-pointer transition-all ${
             copied
               ? 'bg-emerald-600 text-white border-emerald-600'
-              : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+              : 'bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700'
           }`}
           title="Copiar texto consolidado desta rua da Manilha"
         >
-          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
+          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
         </button>
       </div>
 
       {/* CONTEÚDO EXPANDIDO (CARDS INTERNOS DE CASAS / PACOTES) */}
       {isExpanded && (
-        <div className="p-3 space-y-2 bg-slate-50/40">
+        <div className="p-3 space-y-2 bg-slate-950/20">
           {viewMode === 'grouped' ? (
             grupos.map((grupo) => (
               <NumeroCard

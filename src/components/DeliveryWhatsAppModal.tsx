@@ -3,29 +3,20 @@ import {
   X,
   Copy,
   Check,
-  Clock,
   MapPin,
   User,
-  Package,
-  Sparkles,
   AlertTriangle,
   CheckCircle2,
   Edit2,
-  Calendar,
   Home,
   Users,
   ShieldCheck,
   Inbox,
   UserCheck,
   FileText,
-  Camera,
-  Image as ImageIcon,
-  Eye,
-  Trash2,
 } from 'lucide-react';
 import { DeliveryData, ReceiverType } from '../types';
 import { triggerCoinBurst } from '../utils/rewardEffect';
-import { compressImage } from '../utils/imageCompressor';
 import {
   buildWhatsAppMessage,
   buildInsucessoWhatsAppMessage,
@@ -140,12 +131,6 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
   const [selectedReason, setSelectedReason] = useState<string>(INSUCESSO_REASONS[0]);
   const [customReasonText, setCustomReasonText] = useState<string>('');
 
-  // Fotos Obrigatórias da Entrega (Pacote com QR Code + Fachada do Local)
-  const [fotoPacote, setFotoPacote] = useState<string>('');
-  const [fotoLocal, setFotoLocal] = useState<string>('');
-  const [isCompressingPhoto, setIsCompressingPhoto] = useState<boolean>(false);
-  const [activePhotoModal, setActivePhotoModal] = useState<{ url: string; title: string } | null>(null);
-
   const [copied, setCopied] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const [isEditingData, setIsEditingData] = useState(false);
@@ -215,8 +200,6 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
         }
       }
 
-      setFotoPacote(delivery.foto_pacote_path || '');
-      setFotoLocal(delivery.foto_local_path || '');
       setCopied(false);
       setIsEditingReceipt(initialEditingReceipt || false);
       setIsEditingData(false);
@@ -353,28 +336,6 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
     isEditingReceipt,
   ]);
 
-  const handleCapturePhoto = async (e: React.ChangeEvent<HTMLInputElement>, type: 'pacote' | 'local') => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setIsCompressingPhoto(true);
-      const compressed = await compressImage(file, 1000, 0.7);
-      if (type === 'pacote') {
-        setFotoPacote(compressed);
-      } else {
-        setFotoLocal(compressed);
-      }
-    } catch (err) {
-      console.error('Erro ao processar foto:', err);
-      alert('Não foi possível processar a imagem. Tente novamente.');
-    } finally {
-      setIsCompressingPhoto(false);
-      e.target.value = '';
-    }
-  };
-
-  const canComplete = mode === 'insucesso' || (Boolean(fotoPacote) && Boolean(fotoLocal));
-
   const saveUpdatedDelivery = (newStatus: 'entregue' | 'insucesso') => {
     if (!delivery) return;
     const agora = new Date().toISOString();
@@ -422,8 +383,6 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
             {
               recebedor_tipo: (receiverType as ReceiverType) || 'proprio_morador',
               recebedor_detalhes: computedReceiver,
-              foto_pacote_path: fotoPacote,
-              foto_local_path: fotoLocal,
             },
             quando
           )
@@ -659,38 +618,6 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
               </pre>
             </div>
 
-            {/* Fotos Comprobatórias Salvas da Entrega */}
-            {(fotoPacote || fotoLocal || delivery.foto_pacote_path || delivery.foto_local_path) && (
-              <div className="bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-3.5 space-y-2">
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 block">
-                  Fotos da entrega:
-                </span>
-                <div className="grid grid-cols-2 gap-2">
-                  {(fotoPacote || delivery.foto_pacote_path) && (
-                    <div
-                      onClick={() => setActivePhotoModal({ url: fotoPacote || delivery.foto_pacote_path, title: `Pacote & QR Code (${packageCode})` })}
-                      className="cursor-pointer group relative rounded-xl overflow-hidden aspect-[4/3] bg-slate-900 border border-slate-200 dark:border-slate-800"
-                    >
-                      <img src={fotoPacote || delivery.foto_pacote_path} alt="Foto Pacote" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold">
-                        🔍 Ver QR Code
-                      </div>
-                    </div>
-                  )}
-                  {(fotoLocal || delivery.foto_local_path) && (
-                    <div
-                      onClick={() => setActivePhotoModal({ url: fotoLocal || delivery.foto_local_path, title: `Fachada & Local (Nº ${houseNumber})` })}
-                      className="cursor-pointer group relative rounded-xl overflow-hidden aspect-[4/3] bg-slate-900 border border-slate-200 dark:border-slate-800"
-                    >
-                      <img src={fotoLocal || delivery.foto_local_path} alt="Foto Local" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold">
-                        🔍 Ver Fachada
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         ) : (
           /* CASO 2: FORMULÁRIO DE REGISTRO / EDIÇÃO DE RECEBEDOR */
@@ -1065,180 +992,6 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
               </div>
             )}
 
-            {/* FOTOS OBRIGATÓRIAS DA ENTREGA */}
-            {mode === 'entrega' && (
-              <div className="space-y-2.5 bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <Camera className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    <span className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">
-                      Fotos Obrigatórias da Baixa *
-                    </span>
-                  </div>
-                  {fotoPacote && fotoLocal ? (
-                    <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
-                      <Check className="w-3 h-3 stroke-[3]" />
-                      <span>Fotos OK</span>
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-black text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950 px-2 py-0.5 rounded-md border border-amber-300 dark:border-amber-800">
-                      Obrigatórias
-                    </span>
-                  )}
-                </div>
-
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold leading-tight">
-                  Tire a foto da etiqueta com <b>QR Code legível</b> e a foto da <b>fachada/local</b>. Ambas ficam salvas no registro da entrega como prova da baixa.
-                </p>
-
-                <div className="grid grid-cols-2 gap-2.5 pt-1">
-                  {/* FOTO 1: PACOTE COM QR CODE */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-wider block flex items-center justify-between">
-                      <span>1. Pacote & QR Code</span>
-                      {fotoPacote ? (
-                        <span className="text-emerald-600 dark:text-emerald-400 text-[9px] font-bold">✓ Pronta</span>
-                      ) : (
-                        <span className="text-rose-500 text-[9px] font-bold">* Falta</span>
-                      )}
-                    </label>
-
-                    {fotoPacote ? (
-                      <div className="relative group rounded-xl overflow-hidden aspect-[4/3] bg-slate-900 border-2 border-emerald-500 shadow-xs">
-                        <img
-                          src={fotoPacote}
-                          alt="Foto Pacote"
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-1">
-                          <button
-                            type="button"
-                            onClick={() => setActivePhotoModal({ url: fotoPacote, title: `Pacote & QR Code (${packageCode})` })}
-                            className="p-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-700 cursor-pointer"
-                            title="Ampliar foto"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <label className="p-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-700 cursor-pointer" title="Tirar outra foto">
-                            <Camera className="w-4 h-4" />
-                            <input
-                              type="file"
-                              accept="image/*"
-                              capture="environment"
-                              onChange={(e) => handleCapturePhoto(e, 'pacote')}
-                              className="hidden"
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => setFotoPacote('')}
-                            className="p-1.5 rounded-lg bg-rose-900/80 text-rose-200 hover:bg-rose-800 cursor-pointer"
-                            title="Remover foto"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <label className="flex flex-col items-center justify-center p-3 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 bg-white dark:bg-slate-900/80 cursor-pointer transition-all aspect-[4/3] group touch-manipulation">
-                        <div className="w-9 h-9 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
-                          <Camera className="w-5 h-5 stroke-[2.5]" />
-                        </div>
-                        <span className="text-[11px] font-black text-slate-800 dark:text-slate-200 text-center leading-tight">
-                          Tirar Foto do Pacote
-                        </span>
-                        <span className="text-[9px] text-slate-400 text-center mt-0.5">
-                          QR Code legível
-                        </span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          onChange={(e) => handleCapturePhoto(e, 'pacote')}
-                          className="hidden"
-                        />
-                      </label>
-                    )}
-                  </div>
-
-                  {/* FOTO 2: LOCAL / FACHADA */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-wider block flex items-center justify-between">
-                      <span>2. Local & Fachada</span>
-                      {fotoLocal ? (
-                        <span className="text-emerald-600 dark:text-emerald-400 text-[9px] font-bold">✓ Pronta</span>
-                      ) : (
-                        <span className="text-rose-500 text-[9px] font-bold">* Falta</span>
-                      )}
-                    </label>
-
-                    {fotoLocal ? (
-                      <div className="relative group rounded-xl overflow-hidden aspect-[4/3] bg-slate-900 border-2 border-emerald-500 shadow-xs">
-                        <img
-                          src={fotoLocal}
-                          alt="Foto Local"
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-1">
-                          <button
-                            type="button"
-                            onClick={() => setActivePhotoModal({ url: fotoLocal, title: `Local & Fachada (Nº ${houseNumber})` })}
-                            className="p-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-700 cursor-pointer"
-                            title="Ampliar foto"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <label className="p-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-700 cursor-pointer" title="Tirar outra foto">
-                            <Camera className="w-4 h-4" />
-                            <input
-                              type="file"
-                              accept="image/*"
-                              capture="environment"
-                              onChange={(e) => handleCapturePhoto(e, 'local')}
-                              className="hidden"
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => setFotoLocal('')}
-                            className="p-1.5 rounded-lg bg-rose-900/80 text-rose-200 hover:bg-rose-800 cursor-pointer"
-                            title="Remover foto"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <label className="flex flex-col items-center justify-center p-3 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 bg-white dark:bg-slate-900/80 cursor-pointer transition-all aspect-[4/3] group touch-manipulation">
-                        <div className="w-9 h-9 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
-                          <Home className="w-5 h-5 stroke-[2.5]" />
-                        </div>
-                        <span className="text-[11px] font-black text-slate-800 dark:text-slate-200 text-center leading-tight">
-                          Tirar Foto do Local
-                        </span>
-                        <span className="text-[9px] text-slate-400 text-center mt-0.5">
-                          Portão / Fachada
-                        </span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          onChange={(e) => handleCapturePhoto(e, 'local')}
-                          className="hidden"
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-
-                {isCompressingPhoto && (
-                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold animate-pulse text-center">
-                    ⚡ Processando e otimizando imagem para envio rápido...
-                  </p>
-                )}
-              </div>
-            )}
-
             {/* PRÉ-VISUALIZAÇÃO DO TEXTO */}
             <div className="space-y-1.5 pt-1">
               <div className="flex items-center justify-between">
@@ -1366,34 +1119,14 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
           ) : (
             /* MODO C: REGISTRANDO UMA NOVA ENTREGA */
             <>
-              {/* ALERTA DE FOTOS OBRIGATÓRIAS QUANDO NÃO PREENCHIDAS */}
-              {!canComplete && mode === 'entrega' && (
-                <div className="p-3 bg-amber-500/10 border border-amber-400/40 text-amber-800 dark:text-amber-200 rounded-xl text-xs font-bold flex items-center gap-2.5 animate-fadeIn">
-                  <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
-                  <div className="min-w-0">
-                    <span className="font-black block">Baixa bloqueada sem fotos legíveis</span>
-                    <span className="text-[11px] opacity-90 block">
-                      {!fotoPacote && !fotoLocal
-                        ? 'Anexe a foto do pacote (QR Code) e a foto do local.'
-                        : !fotoPacote
-                        ? 'Falta anexar a foto do pacote com QR Code visível.'
-                        : 'Falta anexar a foto da fachada/local.'}
-                    </span>
-                  </div>
-                </div>
-              )}
-
               {/* BOTÃO PRINCIPAL: COPIAR E CONCLUIR */}
               <button
                 type="button"
-                disabled={!canComplete}
                 onClick={(e) => handleCopyAndComplete(e)}
-                className={`w-full h-14 text-white font-black text-sm sm:text-base rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all select-none ${
-                  !canComplete
-                    ? 'bg-slate-300 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed shadow-none border border-slate-200 dark:border-slate-700'
-                    : mode === 'entrega'
-                    ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20 active:bg-emerald-700 cursor-pointer touch-manipulation active:scale-[0.99]'
-                    : 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/20 active:bg-rose-700 cursor-pointer touch-manipulation active:scale-[0.99]'
+                className={`w-full h-14 text-white font-black text-sm sm:text-base rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all select-none cursor-pointer touch-manipulation active:scale-[0.99] ${
+                  mode === 'entrega'
+                    ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20 active:bg-emerald-700'
+                    : 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/20 active:bg-rose-700'
                 }`}
               >
                 <Copy className="w-5 h-5 stroke-[2.5]" />
@@ -1407,13 +1140,8 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
               <div className="flex items-center justify-between gap-2 pt-1">
                 <button
                   type="button"
-                  disabled={!canComplete}
                   onClick={(e) => handleCompleteWithoutCopy(e)}
-                  className={`h-11 px-3 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all ${
-                    !canComplete
-                      ? 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 cursor-not-allowed border border-slate-200/40 dark:border-slate-800'
-                      : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 cursor-pointer touch-manipulation'
-                  }`}
+                  className="h-11 px-3 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 cursor-pointer touch-manipulation"
                 >
                   <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 stroke-[2.5]" />
                   <span>
@@ -1433,29 +1161,6 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
         </div>
 
       </div>
-
-      {/* MODAL DE VISUALIZAÇÃO / ZOOM DA FOTO */}
-      {activePhotoModal && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-fadeIn">
-          <div className="relative max-w-lg w-full max-h-[90vh] flex flex-col items-center">
-            <button
-              type="button"
-              onClick={() => setActivePhotoModal(null)}
-              className="absolute -top-12 right-0 w-9 h-9 rounded-full bg-slate-800 text-white flex items-center justify-center font-black cursor-pointer hover:bg-slate-700"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img
-              src={activePhotoModal.url}
-              alt={activePhotoModal.title}
-              className="max-w-full max-h-[80vh] rounded-2xl object-contain border border-slate-800 shadow-2xl"
-            />
-            <span className="text-xs font-bold text-slate-300 mt-2 bg-slate-900/80 px-3 py-1 rounded-full border border-slate-800">
-              {activePhotoModal.title}
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

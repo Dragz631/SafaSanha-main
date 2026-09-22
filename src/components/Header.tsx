@@ -1,11 +1,8 @@
 import React from 'react';
-import { Package, CheckCircle2, Clock, AlertTriangle, TrendingUp, Users, Truck, Sun, Moon } from 'lucide-react';
-import { getStreetInfo } from '../data/cajuStreets';
+import { Package, CheckCircle2, Clock, AlertTriangle, TrendingUp, Users, Truck } from 'lucide-react';
 
 interface HeaderProps {
   activeStreet: string;
-  theme?: 'light' | 'dark';
-  onToggleTheme?: () => void;
   activeTab?: 'ruas' | 'resumo' | 'associacao';
   onTabChange?: (tab: 'ruas' | 'resumo' | 'associacao') => void;
   onOpenStreetPicker?: () => void;
@@ -21,8 +18,6 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   activeStreet,
-  theme = 'light',
-  onToggleTheme,
   activeTab = 'ruas',
   onTabChange,
   onOpenDailyStreetPicker,
@@ -97,22 +92,6 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
             </div>
-
-            {/* BOTÃO MODO DIA / MODO NOITE */}
-            {onToggleTheme && (
-              <button
-                type="button"
-                onClick={onToggleTheme}
-                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 flex items-center justify-center transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-                title={theme === 'dark' ? 'Mudar para Modo Dia (Claro)' : 'Mudar para Modo Noite (Escuro)'}
-              >
-                {theme === 'dark' ? (
-                  <Sun className="w-4 h-4 text-amber-400" />
-                ) : (
-                  <Moon className="w-4 h-4 text-slate-300" />
-                )}
-              </button>
-            )}
           </div>
         </div>
 

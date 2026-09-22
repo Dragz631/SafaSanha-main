@@ -69,25 +69,6 @@ function Conteudo() {
     return 'ruas';
   });
 
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    try {
-      const themeParam = new URLSearchParams(window.location.search).get('theme');
-      if (themeParam === 'dark' || themeParam === 'light') return themeParam;
-      const saved = localStorage.getItem('safasanha_theme_v2');
-      if (saved === 'dark' || saved === 'light') return saved;
-    } catch (_e) {}
-    return 'light';
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('safasanha_theme_v2', theme);
-    } catch (_e) {}
-    document.documentElement.classList.toggle('dark', theme === 'dark');
-  }, [theme]);
-
-  const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-
   const [activeStreet, setActiveStreet] = useState<string>('Rua Carlos Seidl');
   const [isRegionModalOpen, setIsRegionModalOpen] = useState<boolean>(false);
   const [isCloseDayModalOpen, setIsCloseDayModalOpen] = useState<boolean>(false);
@@ -216,17 +197,11 @@ function Conteudo() {
   };
 
   return (
-    <div
-      className={`min-h-screen font-sans flex flex-col antialiased transition-colors duration-200 selection:bg-emerald-500 selection:text-white ${
-        theme === 'dark' ? 'dark bg-[#090d16] text-slate-100' : 'bg-[#f4f6f9] text-slate-900'
-      }`}
-    >
+    <div className="dark min-h-screen font-sans flex flex-col antialiased bg-[#090d16] text-slate-100 selection:bg-emerald-500 selection:text-white">
       <AvisoArmazenamento />
 
       <Header
         activeStreet={activeStreet}
-        theme={theme}
-        onToggleTheme={toggleTheme}
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenStreetPicker={() => setIsRegionModalOpen(true)}

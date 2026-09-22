@@ -725,7 +725,9 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
 
         {/* CONTEÚDO DINÂMICO: MODO RÁPIDO (SELEÇÃO DIRETA) OU FORMULÁRIO DE DIGITAÇÃO */}
         {cadastroTab === 'rapido' ? (
-          <div className="pt-1">
+          // Altura limitada com rolagem própria: mesmo com muitas casas salvas, a rota de hoje
+          // (mais abaixo na tela) continua alcançável sem precisar rolar por tudo isso primeiro.
+          <div className="pt-1 max-h-[46vh] min-h-[220px] overflow-y-auto pr-0.5 -mr-0.5">
             <QuickMemoryManager
               streetName={activeStreet}
               isManilhaActive={isManilhaActive}
@@ -1041,14 +1043,14 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
               />
             ))
           ) : (
-            <div className="bg-white rounded-3xl p-8 border-2 border-dashed border-amber-300 text-center space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+            <div className="bg-slate-900/60 rounded-2xl p-8 border-2 border-dashed border-amber-500/30 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/15 text-amber-300 flex items-center justify-center mx-auto">
                 <Navigation className="w-6 h-6" />
               </div>
-              <h3 className="font-black text-slate-900 text-sm">
+              <h3 className="font-black text-slate-100 text-sm">
                 Nenhum pacote cadastrado na Manilha ainda
               </h3>
-              <p className="text-xs text-slate-500 max-w-xs mx-auto">
+              <p className="text-xs text-slate-400 max-w-xs mx-auto">
                 Escolha a rua acima (Leão XIII, Canal, Penha ou Letras A a K), digite o número da casa e adicione!
               </p>
             </div>
@@ -1097,14 +1099,14 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
               ))
             )
           ) : (
-            <div className="bg-white rounded-3xl p-8 border-2 border-dashed border-slate-200 text-center space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+            <div className="bg-slate-900/60 rounded-2xl p-8 border-2 border-dashed border-slate-800 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
                 <Package className="w-6 h-6" />
               </div>
-              <h3 className="font-black text-slate-900 text-sm">
+              <h3 className="font-black text-slate-100 text-sm">
                 Nenhum pacote cadastrado para {activeStreet}
               </h3>
-              <p className="text-xs text-slate-500 max-w-xs mx-auto">
+              <p className="text-xs text-slate-400 max-w-xs mx-auto">
                 Use a barra de entrada rápida acima para adicionar o primeiro pacote pelo número da casa.
               </p>
             </div>

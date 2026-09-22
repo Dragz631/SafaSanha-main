@@ -138,10 +138,10 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fadeIn">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 flex flex-col max-h-[92vh] pb-safe">
-        
+      <div className="bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-800 flex flex-col max-h-[92vh] pb-safe">
+
         {/* TOPO DO MODAL */}
-        <div className="bg-slate-900 text-white p-4 pb-3 flex items-center justify-between border-b border-slate-800">
+        <div className="bg-slate-950 text-white p-4 pb-3 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-2xl bg-emerald-500 text-slate-950 flex items-center justify-center font-black shadow-md shrink-0">
               <Compass className="w-5 h-5" />
@@ -164,7 +164,7 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
         </div>
 
         {/* BUSCA RÁPIDA */}
-        <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
+        <div className="p-3 bg-slate-950/60 border-b border-slate-800 space-y-2">
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -172,24 +172,24 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
               value={searchFilter}
               onChange={(e) => setSearchFilter(e.target.value)}
               placeholder="Buscar rua do Caju ou Manilha..."
-              className="w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-emerald-500 shadow-xs"
+              className="w-full pl-8 pr-3 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             />
             {searchFilter && (
               <button
                 onClick={() => setSearchFilter('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs font-bold"
               >
                 ✕
               </button>
             )}
           </div>
-          <p className="text-[10px] text-slate-500 font-bold px-0.5">
-            💡 Marque no botão <span className="text-emerald-700">"Na Rota de Hoje"</span> para fixar a rua na barra rápida do topo.
+          <p className="text-[10px] text-slate-400 font-bold px-0.5">
+            💡 Marque no botão <span className="text-emerald-400">"Hoje"</span> para fixar a rua na barra rápida do topo.
           </p>
         </div>
 
         {/* LISTAGEM DE RUAS DO CAJU & MANILHA */}
-        <div className="p-3.5 space-y-2.5 overflow-y-auto flex-1 bg-slate-50/60">
+        <div className="p-3.5 space-y-2.5 overflow-y-auto flex-1 bg-slate-950/30">
           {filteredStreets.length > 0 ? (
             filteredStreets.map((street, idx) => {
               const isActive = activeStreet.toLowerCase() === street.toLowerCase();
@@ -203,12 +203,12 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
               return (
                 <div
                   key={`street-item-${street}-${idx}`}
-                  className={`rounded-2xl border-2 transition-all p-3 shadow-xs flex items-center justify-between gap-2.5 ${
+                  className={`rounded-2xl border transition-all p-3 flex items-center justify-between gap-2.5 ${
                     isActive
-                      ? 'bg-emerald-50/90 border-emerald-500 shadow-emerald-500/10 ring-2 ring-emerald-500/20'
+                      ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30'
                       : isManilha
-                      ? 'bg-amber-50/50 border-amber-300 hover:border-amber-400'
-                      : 'bg-white border-slate-200/90 hover:border-emerald-300'
+                      ? 'bg-amber-400/5 border-amber-400/40 hover:border-amber-400/70'
+                      : 'bg-slate-900 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   {isEditing ? (
@@ -217,7 +217,7 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
                         type="text"
                         value={editNameInput}
                         onChange={(e) => setEditNameInput(e.target.value)}
-                        className="flex-1 px-2.5 py-1.5 bg-white border-2 border-emerald-500 rounded-lg text-xs font-bold text-slate-900 focus:outline-none"
+                        className="flex-1 px-2.5 py-1.5 bg-slate-950 border border-emerald-500 rounded-lg text-xs font-bold text-slate-100 focus:outline-none"
                         autoFocus
                       />
                       <button
@@ -228,7 +228,7 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
                       </button>
                       <button
                         onClick={() => setEditingStreet(null)}
-                        className="p-1.5 bg-slate-200 text-slate-700 rounded-lg cursor-pointer"
+                        className="p-1.5 bg-slate-800 text-slate-300 rounded-lg cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -245,12 +245,12 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
                         className="flex items-center gap-3 text-left flex-1 min-w-0 cursor-pointer"
                       >
                         <div
-                          className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 font-black shadow-xs ${
+                          className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 font-black ${
                             isActive
                               ? 'bg-emerald-600 text-white'
                               : isManilha
                               ? 'bg-amber-400 text-slate-950'
-                              : 'bg-slate-100 text-slate-600'
+                              : 'bg-slate-800 text-slate-300'
                           }`}
                         >
                           {isActive ? (
@@ -266,7 +266,7 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span
                               className={`text-xs font-black truncate ${
-                                isActive ? 'text-emerald-950' : 'text-slate-900'
+                                isActive ? 'text-emerald-300' : 'text-slate-100'
                               }`}
                             >
                               {street}
@@ -276,17 +276,17 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
                             </span>
                           </div>
 
-                          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold mt-0.5">
-                            <span className="text-slate-500 font-medium truncate max-w-[140px] xs:max-w-[190px]">
+                          <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold mt-0.5">
+                            <span className="font-medium truncate max-w-[140px] xs:max-w-[190px]">
                               {isManilha ? 'Inclui Leão XIII, Canal, Penha e Letras A a K' : info.description}
                             </span>
                             <span>•</span>
                             {stats.total > 0 ? (
-                              <span className={stats.pending > 0 ? 'text-amber-700 font-black' : 'text-emerald-600 font-black'}>
+                              <span className={stats.pending > 0 ? 'text-amber-400 font-black' : 'text-emerald-400 font-black'}>
                                 {stats.total} pct ({stats.delivered} ok{stats.insucesso > 0 ? `, ${stats.insucesso} falhas` : ''})
                               </span>
                             ) : (
-                              <span className="text-slate-400">0 pacotes</span>
+                              <span className="text-slate-500">0 pacotes</span>
                             )}
                           </div>
                         </div>
@@ -300,21 +300,21 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
                           onClick={(e) => handleToggleIncludeToday(street, e)}
                           className={`p-1.5 rounded-xl border text-[10px] font-black flex items-center gap-1 transition-all cursor-pointer ${
                             isIncludedToday
-                              ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                              : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                              : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-750'
                           }`}
                           title={isIncludedToday ? 'Rua fixada no topo' : 'Fixar no topo para hoje'}
                         >
                           {isIncludedToday ? (
-                            <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+                            <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
                           ) : (
-                            <Square className="w-3.5 h-3.5 text-slate-400" />
+                            <Square className="w-3.5 h-3.5 text-slate-500" />
                           )}
                           <span className="hidden xs:inline">Hoje</span>
                         </button>
 
                         {isActive ? (
-                          <span className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-1.5 rounded-xl shadow-xs">
+                          <span className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-1.5 rounded-xl">
                             Ativa
                           </span>
                         ) : (
@@ -324,7 +324,7 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
                               onSelectStreet(street);
                               onClose();
                             }}
-                            className="bg-slate-900 hover:bg-slate-800 active:scale-95 text-white text-[11px] font-black px-2.5 py-1.5 rounded-xl cursor-pointer shadow-xs transition-all"
+                            className="bg-slate-100 hover:bg-white active:scale-95 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-xl cursor-pointer transition-all"
                           >
                             Atender
                           </button>
@@ -334,14 +334,14 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
                           <>
                             <button
                               onClick={() => handleStartEdit(street)}
-                              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
+                              className="p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg cursor-pointer transition-colors"
                               title="Renomear Rua"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => onDeleteStreet(street)}
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
+                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg cursor-pointer transition-colors"
                               title="Remover rua"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -355,8 +355,8 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
               );
             })
           ) : (
-            <div className="bg-white rounded-2xl p-6 border border-slate-200 text-center space-y-2">
-              <p className="text-xs text-slate-500 font-bold">
+            <div className="bg-slate-900 rounded-2xl p-6 border border-slate-800 text-center space-y-2">
+              <p className="text-xs text-slate-400 font-bold">
                 Nenhuma rua encontrada no Caju com "{searchFilter}".
               </p>
               <button
@@ -377,14 +377,14 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
         </div>
 
         {/* FORMULÁRIO RÁPIDO PARA ADICIONAR OUTRA RUA */}
-        <div className="p-3 bg-slate-50 border-t border-slate-200 space-y-2">
+        <div className="p-3 bg-slate-950 border-t border-slate-800 space-y-2">
           <form onSubmit={handleAddNew} className="flex items-center gap-2">
             <input
               type="text"
               value={newStreetName}
               onChange={(e) => setNewStreetName(e.target.value)}
               placeholder="Cadastrar outra rua do Caju..."
-              className="flex-1 px-3 py-2 bg-white border border-slate-200 focus:border-emerald-500 rounded-xl text-xs font-bold text-slate-900 focus:outline-none shadow-xs"
+              className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700/80 focus:border-emerald-500 rounded-xl text-xs font-bold text-slate-100 placeholder-slate-500 focus:outline-none"
             />
             <button
               type="submit"

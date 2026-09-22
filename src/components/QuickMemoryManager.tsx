@@ -4,6 +4,7 @@ import { DeliveryData } from '../types';
 import { MANILHA_SUB_STREETS } from '../data/cajuStreets';
 import { useMemoria } from '../state/MemoriaContext';
 import {
+  compararNumeros,
   destinosDasRuas,
   esquecerDestino,
   esquecerPessoa,
@@ -117,11 +118,20 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
     return { totalInRoute: inRoute, totalPending: pending };
   }, [allSaved, currentDeliveries]);
 
+  // O que ainda falta adicionar aparece primeiro — é o que o operador veio procurar aqui.
+  // Destinos já 100% na rota ficam por último (nada a fazer neles agora).
   const displayed = useMemo(() => {
-    if (statusFilter === 'todas') return filtered;
-    return filtered.filter((d) => {
-      const es = entradasDoDestino(d);
-      return statusFilter === 'na_rota' ? es.some((e) => naRota(d, e)) : es.some((e) => !naRota(d, e));
+    const base =
+      statusFilter === 'todas'
+        ? filtered
+        : filtered.filter((d) => {
+            const es = entradasDoDestino(d);
+            return statusFilter === 'na_rota' ? es.some((e) => naRota(d, e)) : es.some((e) => !naRota(d, e));
+          });
+    return [...base].sort((a, b) => {
+      const aPendente = entradasDoDestino(a).some((e) => !naRota(a, e)) ? 0 : 1;
+      const bPendente = entradasDoDestino(b).some((e) => !naRota(b, e)) ? 0 : 1;
+      return aPendente - bPendente || compararNumeros(a.numeroChave, b.numeroChave);
     });
   }, [filtered, statusFilter, currentDeliveries]);
 
@@ -217,7 +227,8 @@ export const QuickMemoryManager: React.FC<QuickMemoryManagerProps> = ({
         </div>
       )}
 
-      <div className="space-y-2">
+      {/* Fixo no topo do painel rolável: os filtros continuam à mão mesmo com muitas casas salvas. */}
+      <div className="space-y-2 sticky -top-1 z-10 bg-slate-900/95 backdrop-blur-md pb-1 pt-0.5">
         {allSaved.length > 0 && (
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             <button type="button" onClick={() => setStatusFilter('todas')} className={`${chipBase} ${statusFilter === 'todas' ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800'}`}>
