@@ -292,7 +292,7 @@ export const ManualPackageModal: React.FC<ManualPackageModalProps> = ({
               type="text"
               value={complement}
               onChange={(e) => setComplement(e.target.value)}
-              placeholder="Ex: Apto 302, Bloco B, Casa 2, Fundos, Loja..."
+              placeholder="Ex: Apto 302, Bloco B, Casa 2, Loja ABC, Condomínio Sol Apto 5..."
               className="w-full px-3 py-2 bg-white border-2 border-amber-300 focus:border-amber-500 rounded-xl text-xs font-bold text-slate-900 placeholder-slate-400 focus:outline-none shadow-xs"
             />
 

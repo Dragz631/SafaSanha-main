@@ -33,7 +33,9 @@ import {
 import { FailureDetailsModal } from './FailureDetailsModal';
 import { DeliveryHistoryModal } from './DeliveryHistoryModal';
 import { CloseDayModal } from './CloseDayModal';
-import { getStreetInfo, isManilhaDelivery } from '../data/cajuStreets';
+import { getStreetInfo } from '../data/cajuStreets';
+import { contarPacotes, pacotesDaRua, pacotesSemRua, ruasDosPacotes } from '../domain/ruas';
+import { chaveTexto } from '../domain/texto';
 
 interface GeneralSummaryTabProps {
   deliveries: DeliveryData[];
@@ -71,36 +73,22 @@ export const GeneralSummaryTab: React.FC<GeneralSummaryTabProps> = ({
     const streetsMap = new Map<string, string>();
     savedStreets.forEach((st) => {
       const clean = st?.trim();
-      if (clean && !streetsMap.has(clean.toLowerCase())) {
-        streetsMap.set(clean.toLowerCase(), clean);
+      if (clean && !streetsMap.has(chaveTexto(clean))) {
+        streetsMap.set(chaveTexto(clean), clean);
       }
     });
-    deliveries.forEach((d) => {
-      const st = (d.endereco_rua || d.endereco_completo?.split(',')[0])?.trim();
-      if (st && !streetsMap.has(st.toLowerCase())) {
-        streetsMap.set(st.toLowerCase(), st);
-      }
+    ruasDosPacotes(deliveries).forEach((st) => {
+      if (!streetsMap.has(chaveTexto(st))) streetsMap.set(chaveTexto(st), st);
     });
     return Array.from(streetsMap.values());
   }, [savedStreets, deliveries]);
 
-  // Estatísticas por rua / setor
+  // Estatísticas por rua / setor (mesma contagem de todas as outras telas)
   const streetStats = useMemo(() => {
     return allStreets.map((st) => {
-      const cleanSt = st.toLowerCase().trim();
-      const isMan = cleanSt === 'manilha' || cleanSt.includes('manilha');
-
-      const stDeliveries = deliveries.filter((d) => {
-        if (isMan) return isManilhaDelivery(d);
-        if (isManilhaDelivery(d)) return false;
-        const dSt = (d.endereco_rua || d.endereco_completo || '').toLowerCase();
-        return dSt.includes(cleanSt) || cleanSt.includes(dSt);
-      });
-
-      const total = stDeliveries.length;
-      const delivered = stDeliveries.filter((d) => d.status === 'entregue' || d.status === 'concluido').length;
-      const insucesso = stDeliveries.filter((d) => d.status === 'insucesso').length;
-      const pending = total - delivered - insucesso;
+      const { total, entregues: delivered, insucessos: insucesso, pendentes: pending } = contarPacotes(
+        pacotesDaRua(deliveries, st)
+      );
       const pct = total > 0 ? Math.round((delivered / total) * 100) : 0;
       const info = getStreetInfo(st);
 
@@ -413,6 +401,13 @@ export const GeneralSummaryTab: React.FC<GeneralSummaryTabProps> = ({
           <span>Enviar Resumo do Dia no WhatsApp</span>
         </button>
       </div>
+
+      {/* Pacotes sem rua não pertencem a nenhuma rua (nunca são somados a uma): avisa em vez de esconder */}
+      {pacotesSemRua(deliveries).length > 0 && (
+        <div role="alert" className="rounded-2xl border border-rose-300 bg-rose-50 text-rose-800 text-xs font-bold p-3">
+          ⚠️ {pacotesSemRua(deliveries).length} pacote(s) sem rua informada — não aparecem em nenhuma rua. Corrija o endereço deles.
+        </div>
+      )}
 
       {/* 4. RELAÇÃO DE TODAS AS RUAS ATENDIDAS */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3 transition-colors">

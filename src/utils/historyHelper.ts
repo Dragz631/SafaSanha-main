@@ -1,4 +1,6 @@
 import { DeliveryData, CompletedDayRecord, DeliveryTimelineEvent } from '../types';
+import { dataLocal } from '../domain/data';
+import { gravarJSON } from './persistencia';
 
 export const HISTORY_STORAGE_KEY = 'logiscan_completed_history_v1';
 
@@ -89,12 +91,8 @@ export const loadCompletedHistory = (): CompletedDayRecord[] => {
 /**
  * Salva a lista de dias concluídos no histórico permanente
  */
-export const saveCompletedHistory = (history: CompletedDayRecord[]): void => {
-  try {
-    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
-  } catch (err) {
-    console.warn('Aviso: Erro ao salvar histórico de entregas concluídas:', err);
-  }
+export const saveCompletedHistory = (history: CompletedDayRecord[]): boolean => {
+  return gravarJSON(HISTORY_STORAGE_KEY, history);
 };
 
 /**
@@ -193,10 +191,12 @@ export const closeCurrentDeliveryDay = (params: {
   nextDayDeliveries: DeliveryData[];
   totalDelivered: number;
   totalRolledOver: number;
+  /** false = o arquivo do dia NÃO foi gravado; nada deve ser removido da lista de entregas. */
+  historicoSalvo: boolean;
 } => {
   const { deliveries, dayDate, rolloverNonDeliveredToNextDay = true } = params;
   const now = new Date();
-  const dateRef = dayDate || now.toISOString().split('T')[0];
+  const dateRef = dayDate || dataLocal(now);
 
   const deliveredList: DeliveryData[] = [];
   const nonDeliveredList: DeliveryData[] = [];
@@ -279,7 +279,7 @@ export const closeCurrentDeliveryDay = (params: {
     completedDay,
     ...existingHistory.filter((h) => h.data_referencia !== dateRef && h.id_dia !== completedDay.id_dia),
   ];
-  saveCompletedHistory(updatedHistory);
+  const historicoSalvo = saveCompletedHistory(updatedHistory);
 
   // Prepara os pacotes que vão para o dia seguinte com histórico mantido
   const nextDayDeliveries: DeliveryData[] = rolloverNonDeliveredToNextDay
@@ -293,7 +293,7 @@ export const closeCurrentDeliveryDay = (params: {
             status: 'aguardando_rua', // Volta para pendente na nova rota
             tentativas_anteriores: attempts,
             data_original_recebimento: originalIntake,
-            data_reentrega: now.toISOString().split('T')[0],
+            data_reentrega: dataLocal(now),
           },
           {
             timestamp: now.toISOString(),
@@ -308,11 +308,17 @@ export const closeCurrentDeliveryDay = (params: {
       })
     : [];
 
+  // Se o arquivo do dia não foi gravado, NADA sai da lista de entregas (não perde prova de entrega).
+  if (!historicoSalvo) {
+    return { completedDay, nextDayDeliveries: deliveries, totalDelivered: 0, totalRolledOver: 0, historicoSalvo };
+  }
+
   return {
     completedDay,
     nextDayDeliveries,
     totalDelivered: deliveredList.length,
     totalRolledOver: nextDayDeliveries.length,
+    historicoSalvo,
   };
 };
 

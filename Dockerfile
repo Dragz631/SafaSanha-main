@@ -25,7 +25,6 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV DATA_DIR=/app/data
 
 # Instala apenas dependências de produção necessárias em tempo de execução
 COPY package*.json ./
@@ -35,9 +34,6 @@ RUN npm install --omit=dev --no-audit && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/index.html ./index.html
-
-# Cria diretório para persistência de dados das entregas
-RUN mkdir -p /app/data
 
 # Expõe a porta padrão do servidor
 EXPOSE 3000

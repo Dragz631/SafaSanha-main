@@ -3,51 +3,9 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 
-import fs from 'fs';
+// O LogiScan Street funciona sozinho: os dados do dia ficam no aparelho (localStorage).
+// Este servidor só serve o app e expõe o OCR opcional por IA (ainda sem botão na interface).
 
-interface DeliveryRecord {
-  id_entrega: string;
-  codigo_pacote: string;
-  recebedor_tipo: string;
-  recebedor_detalhes: string;
-  foto_pacote_path: string;
-  foto_local_path: string;
-  data_hora: string;
-  status: string;
-  origem_leitura?: string;
-}
-
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DELIVERIES_FILE = path.join(DATA_DIR, 'deliveries.json');
-
-function loadPersistedDeliveries(): DeliveryRecord[] {
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    if (fs.existsSync(DELIVERIES_FILE)) {
-      const raw = fs.readFileSync(DELIVERIES_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    }
-  } catch (err) {
-    console.warn('Aviso: Falha ao ler entregas salvas em disco:', err);
-  }
-  return [];
-}
-
-function savePersistedDeliveries(data: DeliveryRecord[]): void {
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    fs.writeFileSync(DELIVERIES_FILE, JSON.stringify(data, null, 2), 'utf-8');
-  } catch (err) {
-    console.warn('Aviso: Falha ao salvar entregas em disco:', err);
-  }
-}
-
-const deliveriesStore: DeliveryRecord[] = loadPersistedDeliveries();
 
 // Lazy initialization of Gemini API
 let genAI: GoogleGenAI | null = null;
@@ -68,42 +26,6 @@ async function startServer() {
   // API Routes
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
-  });
-
-  // Get all registered deliveries
-  app.get('/api/deliveries', (_req, res) => {
-    res.json(deliveriesStore);
-  });
-
-  // Save new delivery
-  app.post('/api/deliveries', (req, res) => {
-    const delivery = req.body as DeliveryRecord;
-    if (!delivery || !delivery.codigo_pacote) {
-      res.status(400).json({ error: 'Dados inválidos da entrega' });
-      return;
-    }
-    // Remove if existing id
-    const existingIndex = deliveriesStore.findIndex(d => d.id_entrega === delivery.id_entrega);
-    if (existingIndex >= 0) {
-      deliveriesStore[existingIndex] = delivery;
-    } else {
-      deliveriesStore.unshift(delivery);
-    }
-    savePersistedDeliveries(deliveriesStore);
-    res.json({ success: true, delivery });
-  });
-
-  // Delete delivery
-  app.delete('/api/deliveries/:id', (req, res) => {
-    const { id } = req.params;
-    const index = deliveriesStore.findIndex(d => d.id_entrega === id);
-    if (index >= 0) {
-      deliveriesStore.splice(index, 1);
-      savePersistedDeliveries(deliveriesStore);
-      res.json({ success: true, message: 'Entrega removida com sucesso' });
-    } else {
-      res.status(404).json({ error: 'Entrega não encontrada' });
-    }
   });
 
   // Gemini Vision OCR endpoint for package photos (Extract full label text and barcode)
@@ -246,9 +168,8 @@ Não invente dados. Se não localizar algum campo, deixe como string vazia "".`,
   });
 
   // Vite middleware setup for dev / static in production
-  const isProduction =
-    process.env.NODE_ENV === 'production' ||
-    (!process.env.VITE_DEV && fs.existsSync(path.join(process.cwd(), 'dist', 'index.html')));
+  // Só entra em modo produção quando NODE_ENV=production (antes, ter uma pasta dist/ velha fazia o `npm run dev` servir o build antigo).
+  const isProduction = process.env.NODE_ENV === 'production';
 
   if (!isProduction) {
     try {

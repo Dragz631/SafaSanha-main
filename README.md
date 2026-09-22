@@ -13,17 +13,18 @@ Aplicativo web mobile-first para triagem, leitura rápida de código de barras, 
 - [Como Instalar no TrueNAS CORE (FreeBSD Jail)](#-como-instalar-no-truenas-core-freebsd-jail)
 - [Execução Local / Desenvolvimento](#-execução-local--desenvolvimento)
 - [Dica Importante: Câmera do Celular & HTTPS](#-dica-importante-câmera-do-celular--https)
-- [Estrutura de Arquivos e Persistência](#-estrutura-de-arquivos-e-persistência)
+- [Estrutura de Arquivos](#-estrutura-de-arquivos)
 - [Endpoints da API](#-endpoints-da-api)
 
 ---
 
 ## ✨ Visão Geral e Recursos
 
-- 📸 **Scanner de Código de Barras e OCR com IA:** Leitura automática de etiquetas e código de pacotes via câmera ou upload com Google Gemini Vision.
+- 📸 **OCR de etiquetas por IA (opcional):** endpoint com Google Gemini Vision disponível; ainda sem botão na interface (decisão de produto pendente).
 - 💬 **Integração com WhatsApp:** Gera modelos de mensagem prontos para moradores/recebedores.
-- 🗂️ **Organização por Rua e Lote:** Agrupamento inteligente de encomendas por endereço.
-- 💾 **Persistência de Dados:** Salva e recupera as entregas registradas em arquivo JSON seguro (`data/deliveries.json`).
+- 🗂️ **Organização por Rua → Nº → destino → unidade:** número igual não significa condomínio; só agrupa com evidência explícita (Apto, Bloco, Casa 2, Condomínio X, Loja ABC…) e pede confirmação quando há dúvida.
+- 🧠 **Memória operacional por destino:** lembra locais, moradores por unidade e quem já recebeu — apenas sugere; a entrega registra quem recebeu de fato.
+- 💾 **Dados no aparelho:** o app funciona sozinho — pacotes, memória de destinos e histórico ficam no `localStorage` do celular (não há API de dados nem dependência de outro servidor). Se o aparelho ficar sem espaço, o app avisa em vermelho.
 - 🐳 **Pronto para Docker:** Imagem enxuta baseada em Node 22 Alpine, pronta para deploy em TrueNAS, servidores Linux ou nuvem.
 
 ---
@@ -37,10 +38,9 @@ Antes de iniciar, você precisará de uma **chave de API do Google Gemini** para
 ### Variáveis configuráveis:
 | Variável | Padrão | Descrição |
 | :--- | :--- | :--- |
-| `GEMINI_API_KEY` | *(Obrigatório para OCR)* | Chave de API do Gemini para extração de texto de etiquetas. |
+| `GEMINI_API_KEY` | *(Opcional — só o OCR)* | Chave de API do Gemini para extração de texto de etiquetas. |
 | `PORT` | `3000` | Porta TCP em que o servidor web irá rodar. |
 | `NODE_ENV` | `production` | Modo de execução (`production` para servidor compilado). |
-| `DATA_DIR` | `/app/data` | Diretório onde o arquivo de entregas `deliveries.json` será persistido. |
 
 ---
 
@@ -82,9 +82,6 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - GEMINI_API_KEY=sua_chave_gemini_aqui
-      - DATA_DIR=/app/data
-    volumes:
-      - /mnt/seu-pool/apps/safasanha/data:/app/data
 ```
 
 5. Clique em **Install** / **Save**. O TrueNAS irá construir o container e iniciar o SafaSanha automaticamente.
@@ -209,45 +206,40 @@ O serviço agora iniciará automaticamente sempre que a Jail ou o TrueNAS for re
 
 ---
 
-## 📁 Estrutura de Arquivos e Persistência
+## 📁 Estrutura de Arquivos
 
 ```
 SafaSanha/
-├── data/                  # Diretório persistente de entregas (deliveries.json)
-├── dist/                  # Build de produção (Vite SPA + server.cjs)
-├── public/                # Manifest PWA e ícones estáticos
-├── src/                   # Código fonte React + TypeScript
-│   ├── components/        # Componentes visuais (Wizard de entrega, OCR, WhatsApp)
-│   ├── lib/               # Motores de associação, OCR e scanner de código
-│   ├── utils/             # Utilitários e helpers do WhatsApp
-│   └── App.tsx            # Componente principal
-├── Dockerfile             # Multi-stage Docker build
-├── docker-compose.yml     # Orquestração do container para TrueNAS SCALE
-├── server.ts              # Servidor Express com API Gemini OCR e rotas
-├── package.json           # Dependências e scripts do projeto
-├── .env.example           # Modelo de variáveis de ambiente
-└── README.md              # Este guia de instalação
+├── public/                # Manifest PWA
+├── src/
+│   ├── domain/            # Inteligência de endereço e memória (puro e testado):
+│   │                      #   endereco, destino, memoria, agrupamento, cadastro, entrega, ruas
+│   ├── state/             # Contexto React da memória operacional
+│   ├── components/        # Telas e modais (Ruas, Resumo, Associação, entrega, WhatsApp)
+│   ├── utils/             # WhatsApp, fotos, histórico, persistência com falha visível
+│   ├── data/              # Ruas/áreas do Caju (configuração regional)
+│   └── App.tsx
+├── server.ts              # Express: serve o app + OCR opcional (Gemini)
+├── Dockerfile · docker-compose.yml
+└── README.md
+```
+
+### Testes e verificação
+
+```bash
+npm test        # Vitest: regras de endereço, destino, memória, agrupamento e transições de entrega
+npm run lint    # tsc --noEmit
+npm run build   # build de produção
 ```
 
 ---
 
 ## 🔌 Endpoints da API
 
-- **`GET /api/health`**
-  - Retorna o status de saúde do serviço, timestamp e quantidade de entregas salvas.
-  - Exemplo de resposta: `{"status": "ok", "service": "SafaSanha - LogiScan", "deliveriesCount": 12}`
+- **`GET /api/health`** — `{"status":"ok","time":"..."}` (usado pelo healthcheck do Docker).
+- **`POST /api/ocr-gemini`** — recebe a imagem base64 da etiqueta e devolve os dados extraídos pelo Gemini. Opcional e **sem autenticação**: exponha apenas em rede confiável.
 
-- **`GET /api/deliveries`**
-  - Retorna a lista de todas as entregas cadastradas no sistema.
-
-- **`POST /api/deliveries`**
-  - Cadastra ou atualiza uma entrega e salva automaticamente no arquivo `data/deliveries.json`.
-
-- **`DELETE /api/deliveries/:id`**
-  - Remove uma entrega pelo ID.
-
-- **`POST /api/ocr-gemini`**
-  - Recebe a imagem em base64 da etiqueta e retorna os dados extraídos pelo Google Gemini (código de pacote, nome do destinatário, número da casa, complemento).
+O app não usa mais nenhuma API de dados: o Street funciona sozinho.
 
 ---
 

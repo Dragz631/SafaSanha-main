@@ -32,6 +32,16 @@ interface AssociationItem {
 const STORAGE_KEY = 'logiscan_association_list_v2';
 const ASSOC_NAME_KEY = 'logiscan_assoc_name_v2';
 
+/** Lista fictícia que a versão anterior injetava (nomes/códigos fixos). Só é descartada se for EXATAMENTE ela. */
+const NOMES_DEMO = ['Diego Vicente', 'Maria de Lourdes', 'Rafael Santos'];
+const CODIGOS_DEMO = ['#1021,#1025', '#1022', '#1023,#1024,#1026'];
+function ehListaDemo(lista: Array<{ name?: string; codes?: string[] }>): boolean {
+  return (
+    lista.length === NOMES_DEMO.length &&
+    lista.every((it, i) => it.name === NOMES_DEMO[i] && (it.codes ?? []).join(',') === CODIGOS_DEMO[i])
+  );
+}
+
 export const AssociationTab: React.FC = () => {
   const [associationName, setAssociationName] = useState<string>(() => {
     try {
@@ -49,14 +59,11 @@ export const AssociationTab: React.FC = () => {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        // A versão antiga gravava uma lista de demonstração no primeiro uso; ela não é dado real.
+        if (Array.isArray(parsed)) return ehListaDemo(parsed) ? [] : parsed;
       }
     } catch (_e) {}
-    return [
-      { id: '1', name: 'Diego Vicente', count: 2, codes: ['#1021', '#1025'] },
-      { id: '2', name: 'Maria de Lourdes', count: 1, codes: ['#1022'] },
-      { id: '3', name: 'Rafael Santos', count: 3, codes: ['#1023', '#1024', '#1026'] },
-    ];
+    return [];
   });
 
   // Salva no LocalStorage

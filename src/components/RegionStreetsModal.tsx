@@ -23,8 +23,8 @@ import {
   CAJU_PRIMARY_AREAS,
   MANILHA_SUB_STREETS,
   getStreetInfo,
-  isManilhaDelivery
 } from '../data/cajuStreets';
+import { contarPacotes, ehAreaManilha, pacotesDaRua, ruasDosPacotes } from '../domain/ruas';
 
 interface RegionStreetsModalProps {
   isOpen: boolean;
@@ -72,42 +72,17 @@ export const RegionStreetsModal: React.FC<RegionStreetsModalProps> = ({
     });
 
     // 3. Ruas com pacotes (se não for sub-rua da Manilha)
-    deliveries.forEach((d) => {
-      const st = (d.endereco_rua || d.endereco_completo?.split(',')[0])?.trim();
-      if (st && !isManilhaDelivery(d) && !map.has(st.toLowerCase())) {
-        map.set(st.toLowerCase(), st);
-      }
+    ruasDosPacotes(deliveries).forEach((st) => {
+      if (!map.has(st.toLowerCase())) map.set(st.toLowerCase(), st);
     });
 
     return Array.from(map.values());
   }, [savedStreets, deliveries]);
 
-  // Calcula estatísticas de pacotes por rua
+  // Calcula estatísticas de pacotes por rua (mesma contagem de todas as outras telas)
   const getStreetStats = (street: string) => {
-    const clean = street.toLowerCase().trim();
-    if (clean === 'manilha' || clean.includes('manilha')) {
-      const manilhaList = deliveries.filter((d) => isManilhaDelivery(d));
-      const total = manilhaList.length;
-      const delivered = manilhaList.filter(
-        (d) => d.status === 'entregue' || d.status === 'concluido'
-      ).length;
-      const insucesso = manilhaList.filter((d) => d.status === 'insucesso').length;
-      const pending = total - delivered - insucesso;
-      return { total, delivered, insucesso, pending, isManilha: true };
-    }
-
-    const list = deliveries.filter((d) => {
-      if (isManilhaDelivery(d)) return false;
-      const st = (d.endereco_rua || d.endereco_completo || '').toLowerCase();
-      return st.includes(clean) || clean.includes(st);
-    });
-    const total = list.length;
-    const delivered = list.filter(
-      (d) => d.status === 'entregue' || d.status === 'concluido'
-    ).length;
-    const insucesso = list.filter((d) => d.status === 'insucesso').length;
-    const pending = total - delivered - insucesso;
-    return { total, delivered, insucesso, pending, isManilha: false };
+    const c = contarPacotes(pacotesDaRua(deliveries, street));
+    return { total: c.total, delivered: c.entregues, insucesso: c.insucessos, pending: c.pendentes, isManilha: ehAreaManilha(street) };
   };
 
   // Filtra as ruas pela busca

@@ -15,12 +15,6 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - DATA_DIR=/app/data
-    volumes:
-      # Mapeamento do diretório de dados persistentes para não perder o histórico de entregas
-      - safasanha_data:/app/data
-      # Ou se preferir mapear um diretório local do TrueNAS:
-      # - /mnt/seu-pool/apps/safasanha/data:/app/data
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health', (r) => { if (r.statusCode !== 200) process.exit(1); })"]
       interval: 30s
@@ -28,6 +22,3 @@ services:
       retries: 3
       start_period: 10s
 
-volumes:
-  safasanha_data:
-    driver: local

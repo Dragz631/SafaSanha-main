@@ -14,7 +14,9 @@ import {
   Sparkles
 } from 'lucide-react';
 import { DeliveryData } from '../types';
-import { HouseGroupCard } from './HouseGroupCard';
+import { NumeroCard } from './NumeroCard';
+import { useMemoria } from '../state/MemoriaContext';
+import { agruparRua, filtrarGrupos } from '../domain/agrupamento';
 import { PackageCard } from './PackageCard';
 import { ManilhaSubStreetDef } from '../data/cajuStreets';
 import { buildGroupedWhatsAppMessage, copyTextToClipboard } from '../utils/whatsappHelper';
@@ -22,23 +24,30 @@ import { buildGroupedWhatsAppMessage, copyTextToClipboard } from '../utils/whats
 interface ManilhaSubStreetCardProps {
   subStreetDef: ManilhaSubStreetDef;
   deliveries: DeliveryData[];
+  /** Todos os pacotes desta sub-rua (base da classificação; `deliveries` já vem filtrado pela busca). */
+  todos?: DeliveryData[];
   viewMode: 'grouped' | 'individual';
   onOpenSingleDeliveryModal: (delivery: DeliveryData, mode?: 'entrega' | 'insucesso') => void;
   onOpenGroupDeliveryModal: (deliveries: DeliveryData[]) => void;
   onEditDelivery: (delivery: DeliveryData) => void;
   onDeleteDelivery: (id: string) => void;
   onUpdateDelivery: (delivery: DeliveryData) => void;
+  onConfirmarDestino: (pacote: DeliveryData, destinoId: string) => void;
+  onMudarStatus?: (delivery: DeliveryData, status: DeliveryData['status']) => DeliveryData;
 }
 
 export const ManilhaSubStreetCard: React.FC<ManilhaSubStreetCardProps> = ({
   subStreetDef,
   deliveries,
+  todos,
   viewMode,
   onOpenSingleDeliveryModal,
   onOpenGroupDeliveryModal,
   onEditDelivery,
   onDeleteDelivery,
   onUpdateDelivery,
+  onConfirmarDestino,
+  onMudarStatus,
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
@@ -52,29 +61,13 @@ export const ManilhaSubStreetCard: React.FC<ManilhaSubStreetCardProps> = ({
   const isCompleted = deliveredCount === totalCount && totalCount > 0;
   const pct = totalCount > 0 ? Math.round((deliveredCount / totalCount) * 100) : 0;
 
-  // Agrupamento por casas dentro desta sub-rua
-  const groupedHouses = React.useMemo(() => {
-    const map = new Map<string, DeliveryData[]>();
-    deliveries.forEach((d) => {
-      const num = d.numero_casa || d.endereco_numero || 'S/N';
-      if (!map.has(num)) {
-        map.set(num, []);
-      }
-      map.get(num)!.push(d);
-    });
-
-    return Array.from(map.entries())
-      .map(([houseNumber, items]) => ({
-        houseNumber,
-        items,
-        count: items.length,
-      }))
-      .sort((a, b) => {
-        const numA = parseInt(a.houseNumber, 10) || 0;
-        const numB = parseInt(b.houseNumber, 10) || 0;
-        return numA - numB;
-      });
-  }, [deliveries]);
+  // Organização por número/destino desta sub-rua. Classificada sobre TODOS os pacotes da sub-rua;
+  // a busca/filtro só escondem (nunca reclassificam).
+  const { memoria } = useMemoria();
+  const grupos = React.useMemo(() => {
+    const visiveis = new Set(deliveries.map((d) => d.id_entrega));
+    return filtrarGrupos(agruparRua(todos ?? deliveries, memoria), (p) => visiveis.has(p.id_entrega));
+  }, [deliveries, todos, memoria]);
 
   // Lista dos nomes dos destinatários para exibição compacta
   const clientsSummary = React.useMemo(() => {
@@ -218,16 +211,15 @@ export const ManilhaSubStreetCard: React.FC<ManilhaSubStreetCardProps> = ({
       {isExpanded && (
         <div className="p-3 space-y-2 bg-slate-50/40">
           {viewMode === 'grouped' ? (
-            groupedHouses.map((group) => (
-              <HouseGroupCard
-                key={`${subStreetDef.id}-${group.houseNumber}`}
-                houseNumber={group.houseNumber}
-                deliveries={group.items}
+            grupos.map((grupo) => (
+              <NumeroCard
+                key={`${subStreetDef.id}-${grupo.numeroChave}`}
+                grupo={grupo}
                 onOpenSingleDeliveryModal={onOpenSingleDeliveryModal}
                 onOpenGroupDeliveryModal={onOpenGroupDeliveryModal}
                 onEditDelivery={onEditDelivery}
                 onDeleteDelivery={onDeleteDelivery}
-                onUpdateDelivery={onUpdateDelivery}
+                onConfirmarDestino={onConfirmarDestino}
               />
             ))
           ) : (
@@ -243,13 +235,11 @@ export const ManilhaSubStreetCard: React.FC<ManilhaSubStreetCardProps> = ({
                 onDeleteClick={(id) => onDeleteDelivery(id)}
                 onDelete={(id) => onDeleteDelivery(id)}
                 onQuickStatusChange={(del, status) => {
-                  onUpdateDelivery({ ...del, status });
+                  onUpdateDelivery(onMudarStatus ? onMudarStatus(del, status) : { ...del, status });
                 }}
                 onToggleStatus={(del) => {
-                  onUpdateDelivery({
-                    ...del,
-                    status: del.status === 'entregue' ? 'aguardando_rua' : 'entregue',
-                  });
+                  const alvo = del.status === 'entregue' ? 'aguardando_rua' : 'entregue';
+                  onUpdateDelivery(onMudarStatus ? onMudarStatus(del, alvo) : { ...del, status: alvo });
                 }}
               />
             ))

@@ -55,6 +55,12 @@ export const CloseDayModal: React.FC<CloseDayModalProps> = ({
       });
 
       setIsProcessing(false);
+      if (!result.historicoSalvo) {
+        window.alert(
+          'Não foi possível arquivar o dia (armazenamento do aparelho cheio). Nada foi apagado. Libere espaço e tente encerrar de novo.'
+        );
+        return;
+      }
       onConfirmCloseDay({
         nextDayDeliveries: result.nextDayDeliveries,
         totalDelivered: result.totalDelivered,

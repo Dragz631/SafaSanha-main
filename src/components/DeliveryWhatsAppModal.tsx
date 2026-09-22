@@ -23,11 +23,9 @@ import {
   Eye,
   Trash2,
 } from 'lucide-react';
-import { DeliveryData } from '../types';
-import { saveAddressToMemory } from '../utils/addressMemoryStorage';
+import { DeliveryData, ReceiverType } from '../types';
 import { triggerCoinBurst } from '../utils/rewardEffect';
 import { compressImage } from '../utils/imageCompressor';
-import { enqueueDeliveryForSync } from '../services/safasanhasoClient';
 import {
   buildWhatsAppMessage,
   buildInsucessoWhatsAppMessage,
@@ -35,23 +33,22 @@ import {
   getFormattedCurrentTime,
   getFormattedCurrentDate
 } from '../utils/whatsappHelper';
-import {
-  getDoormenForAddress,
-  saveDoormanForAddress,
-  cleanDoormanName,
-  getFamilyForAddress,
-  saveFamilyForAddress,
-  getNeighborsForAddress,
-  saveNeighborForAddress,
-} from '../utils/doormanStorage';
+import { cleanDoormanName } from '../utils/recebedorTexto';
+import { RecebedoresConhecidos } from './RecebedoresConhecidos';
+import { useMemoria } from '../state/MemoriaContext';
+import { registrarRecebedor, sugerirRecebedores } from '../domain/memoria';
+import { interpretarComplemento } from '../domain/endereco';
+import { aplicarEntrega, aplicarInsucesso } from '../domain/entrega';
 
 interface DeliveryWhatsAppModalProps {
   isOpen?: boolean;
   delivery: DeliveryData | null;
+  /** Destino conhecido a que o pacote pertence (memória de recebedores é POR DESTINO, não por rua+número). */
+  destinoId?: string;
   initialMode?: 'entrega' | 'insucesso';
   initialEditingReceipt?: boolean;
   onClose: () => void;
-  onConfirmDelivered?: () => void;
+  /** Recebe o pacote já atualizado (status correto, recebedor real, fotos, horários). */
   onConfirmDelivery?: (updated: DeliveryData) => void;
   onSaveDelivery?: (updated: DeliveryData) => void;
 }
@@ -100,13 +97,14 @@ export const NEIGHBOR_LOCATION_PRESETS = [
 export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
   isOpen = true,
   delivery,
+  destinoId,
   initialMode = 'entrega',
   initialEditingReceipt = false,
   onClose,
-  onConfirmDelivered,
   onConfirmDelivery,
   onSaveDelivery,
 }) => {
+  const { memoria, atualizar } = useMemoria();
   const [mode, setMode] = useState<'entrega' | 'insucesso'>(initialMode);
   
   // Verifica se o pacote já foi entregue anteriormente
@@ -226,23 +224,14 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
     }
   }, [delivery, initialMode, initialEditingReceipt]);
 
-  // Porteiros cadastrados na memória para este endereço/número
-  const savedDoormen = useMemo(() => {
-    if (!houseNumber) return [];
-    return getDoormenForAddress(streetName, houseNumber);
-  }, [streetName, houseNumber]);
-
-  // Familiares salvos na memória para este endereço/número
-  const savedFamily = useMemo(() => {
-    if (!houseNumber) return [];
-    return getFamilyForAddress(streetName, houseNumber);
-  }, [streetName, houseNumber]);
-
-  // Vizinhos salvos na memória para este endereço/número
-  const savedNeighbors = useMemo(() => {
-    if (!houseNumber) return [];
-    return getNeighborsForAddress(streetName, houseNumber);
-  }, [streetName, houseNumber]);
+  // Recebedores CONHECIDOS deste destino (sugestão; quem recebeu de fato é o que o operador confirmar abaixo)
+  const unidadeChave = useMemo(() => interpretarComplemento(complement).unidade?.chave, [complement]);
+  const conhecidos = (categoria: string) =>
+    sugerirRecebedores(memoria, destinoId, { categoria, unidadeChave }).map((r) => r.rotulo);
+  const savedDoormen = useMemo(() => conhecidos('portaria'), [memoria, destinoId, unidadeChave]);
+  const savedFamily = useMemo(() => conhecidos('familiar'), [memoria, destinoId, unidadeChave]);
+  const savedNeighbors = useMemo(() => conhecidos('vizinho'), [memoria, destinoId, unidadeChave]);
+  const savedTerceiros = useMemo(() => conhecidos('terceiros'), [memoria, destinoId, unidadeChave]);
 
   // Calcula o nome final do recebedor dinamicamente
   const computedReceiver = useMemo(() => {
@@ -369,7 +358,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
     if (!file) return;
     try {
       setIsCompressingPhoto(true);
-      const compressed = await compressImage(file, 1400, 0.82);
+      const compressed = await compressImage(file, 1000, 0.7);
       if (type === 'pacote') {
         setFotoPacote(compressed);
       } else {
@@ -388,74 +377,60 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
 
   const saveUpdatedDelivery = (newStatus: 'entregue' | 'insucesso') => {
     if (!delivery) return;
+    const agora = new Date().toISOString();
 
-    // Salva na memória do endereço de acordo com o tipo de recebedor
-    if (mode === 'entrega') {
-      if (receiverType === 'portaria' && receiverCustomText.trim()) {
-        saveDoormanForAddress(streetName, houseNumber, receiverCustomText.trim());
+    // Aprende com QUEM RECEBEU DE FATO. O histórico só sugere; o registro da entrega guarda o recebedor real.
+    if (mode === 'entrega' && newStatus === 'entregue' && destinoId) {
+      let rotulo = '';
+      if (receiverType === 'portaria') {
+        rotulo = cleanDoormanName(receiverCustomText);
       } else if (receiverType === 'familiar') {
-        const famText = familyRelation
+        rotulo = familyRelation
           ? familyName.trim()
             ? `${familyRelation} (${familyName.trim()})`
             : familyRelation
           : familyName.trim() || receiverCustomText.trim();
-        if (famText) {
-          saveFamilyForAddress(streetName, houseNumber, famText);
-        }
       } else if (receiverType === 'vizinho') {
         const numPart = neighborNumber.trim();
         const namePart = neighborName.trim();
-        const vizText = numPart && namePart
+        rotulo = numPart && namePart
           ? (/^\d+/.test(numPart) ? `Nº ${numPart} (${namePart})` : `${numPart} (${namePart})`)
           : (numPart ? (/^\d+/.test(numPart) ? `Nº ${numPart}` : numPart) : namePart || receiverCustomText.trim());
-        if (vizText) {
-          saveNeighborForAddress(streetName, houseNumber, vizText);
-        }
+      } else if (receiverType === 'terceiros' || receiverType === 'local_seguro') {
+        rotulo = receiverCustomText.trim();
+      }
+      if (rotulo.length >= 2) {
+        atualizar((m) => registrarRecebedor(m, destinoId, { categoria: receiverType, rotulo, unidadeChave }, agora));
       }
     }
 
-    const updated: DeliveryData = {
+    const base: DeliveryData = {
       ...delivery,
       nome_destinatario: clientName,
-      recebedor_detalhes: mode === 'entrega' ? computedReceiver : clientName,
-      recebedor_tipo: (receiverType as any) || 'proprio_morador',
       endereco_rua: streetName,
       numero_casa: houseNumber,
       endereco_numero: houseNumber,
-      complemento: complement,
+      complemento: complement.trim() || undefined,
       codigo_pacote: packageCode,
-      status: newStatus,
-      foto_pacote_path: fotoPacote || delivery.foto_pacote_path || '',
-      foto_local_path: fotoLocal || delivery.foto_local_path || '',
-      motivo_insucesso: newStatus === 'insucesso' ? computedReason : undefined,
-      data_hora: delivery.data_hora || new Date().toISOString(),
     };
+    // Corrigir o recibo de uma entrega já feita não muda a hora em que ela aconteceu.
+    const quando = isAlreadyDelivered ? delivery.data_hora_entrega || delivery.data_hora : agora;
+    const updated =
+      newStatus === 'entregue'
+        ? aplicarEntrega(
+            base,
+            {
+              recebedor_tipo: (receiverType as ReceiverType) || 'proprio_morador',
+              recebedor_detalhes: computedReceiver,
+              foto_pacote_path: fotoPacote,
+              foto_local_path: fotoLocal,
+            },
+            quando
+          )
+        : aplicarInsucesso(base, computedReason, agora);
 
-    // Envia automaticamente para o SafaSanhaso Desktop (e guarda na fila offline se estiver na rua)
-    if (newStatus === 'entregue') {
-      try {
-        enqueueDeliveryForSync(updated);
-      } catch (_err) {
-        console.warn('Falha ao enfileirar entrega para o SafaSanhaso:', _err);
-      }
-    }
-
-    // Salva na memória de endereços rápidos
-    try {
-      saveAddressToMemory(streetName, houseNumber, complement, clientName);
-    } catch (_err) {
-      console.warn('Erro ao salvar endereço na memória:', _err);
-    }
-
-    if (onConfirmDelivery) {
-      onConfirmDelivery(updated);
-    }
-    if (onSaveDelivery) {
-      onSaveDelivery(updated);
-    }
-    if (onConfirmDelivered) {
-      onConfirmDelivered();
-    }
+    if (onConfirmDelivery) onConfirmDelivery(updated);
+    else if (onSaveDelivery) onSaveDelivery(updated);
   };
 
   /**
@@ -688,7 +663,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
             {(fotoPacote || fotoLocal || delivery.foto_pacote_path || delivery.foto_local_path) && (
               <div className="bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-3.5 space-y-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 block">
-                  Fotos Salvas no SafaSanhaso:
+                  Fotos da entrega:
                 </span>
                 <div className="grid grid-cols-2 gap-2">
                   {(fotoPacote || delivery.foto_pacote_path) && (
@@ -772,7 +747,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-black text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
                         <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 stroke-[2.5]" />
-                        <span>Porteiros salvos no Nº {houseNumber}:</span>
+                        <span>Porteiros conhecidos neste destino:</span>
                       </span>
                       <span className="text-[10px] font-black text-amber-800 dark:text-amber-300 bg-amber-200/70 dark:bg-amber-900/60 px-2 py-0.5 rounded-md">
                         Memória
@@ -878,7 +853,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
                       <div className="pt-1 space-y-1.5 border-t border-slate-200/60 dark:border-slate-800/80">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                            Salvos no Nº {houseNumber}:
+                            Conhecidos neste destino:
                           </span>
                           <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">1 toque</span>
                         </div>
@@ -969,7 +944,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
                       <div className="pt-1 space-y-1.5 border-t border-slate-200/60 dark:border-slate-800/80">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                            Vizinhos salvos no Nº {houseNumber}:
+                            Vizinhos conhecidos neste destino:
                           </span>
                           <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">1 toque</span>
                         </div>
@@ -1037,6 +1012,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
                     <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
                       Nome / Identificação de quem recebeu:
                     </label>
+                    <RecebedoresConhecidos nomes={savedTerceiros} atual={receiverCustomText} onEscolher={setReceiverCustomText} />
                     <input
                       type="text"
                       value={receiverCustomText}
@@ -1089,7 +1065,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
               </div>
             )}
 
-            {/* FOTOS OBRIGATÓRIAS DA ENTREGA (SAFASANHASO / LOGISCAN) */}
+            {/* FOTOS OBRIGATÓRIAS DA ENTREGA */}
             {mode === 'entrega' && (
               <div className="space-y-2.5 bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-2xs">
                 <div className="flex items-center justify-between">
@@ -1112,7 +1088,7 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
                 </div>
 
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold leading-tight">
-                  Tire a foto da etiqueta com <b>QR Code legível</b> e a foto da <b>fachada/local</b>. Ambas são transmitidas diretamente para o SafaSanhaso.
+                  Tire a foto da etiqueta com <b>QR Code legível</b> e a foto da <b>fachada/local</b>. Ambas ficam salvas no registro da entrega como prova da baixa.
                 </p>
 
                 <div className="grid grid-cols-2 gap-2.5 pt-1">

@@ -22,31 +22,27 @@ import {
   Eye,
   Trash2,
 } from 'lucide-react';
-import { DeliveryData } from '../types';
-import { saveAddressToMemory } from '../utils/addressMemoryStorage';
+import { DeliveryData, ReceiverType } from '../types';
 import { triggerCoinBurst } from '../utils/rewardEffect';
 import { compressImage } from '../utils/imageCompressor';
-import { enqueueDeliveryForSync } from '../services/safasanhasoClient';
 import {
   buildGroupedWhatsAppMessage,
   copyTextToClipboard,
   getFormattedCurrentTime,
   getFormattedCurrentDate
 } from '../utils/whatsappHelper';
-import {
-  getDoormenForAddress,
-  saveDoormanForAddress,
-  cleanDoormanName,
-  getFamilyForAddress,
-  saveFamilyForAddress,
-  getNeighborsForAddress,
-  saveNeighborForAddress,
-} from '../utils/doormanStorage';
+import { cleanDoormanName } from '../utils/recebedorTexto';
+import { RecebedoresConhecidos } from './RecebedoresConhecidos';
+import { useMemoria } from '../state/MemoriaContext';
+import { registrarRecebedor, sugerirRecebedores } from '../domain/memoria';
+import { aplicarEntrega } from '../domain/entrega';
 import { FAMILY_RELATIONS, NEIGHBOR_LOCATION_PRESETS } from './DeliveryWhatsAppModal';
 
 interface GroupedDeliveryWhatsAppModalProps {
   isOpen?: boolean;
   deliveries: DeliveryData[];
+  /** Destino conhecido a que TODOS os pacotes do grupo pertencem (a memória de recebedores é por destino). */
+  destinoId?: string;
   onClose: () => void;
   onConfirmGroupDelivery?: (updatedDeliveries: DeliveryData[]) => void;
   onConfirmDelivery?: (updatedDeliveries: DeliveryData[]) => void;
@@ -64,9 +60,11 @@ const RECEIVER_PRESETS = [
 export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModalProps> = ({
   isOpen = true,
   deliveries,
+  destinoId,
   onClose,
   onConfirmGroupDelivery,
 }) => {
+  const { memoria, atualizar } = useMemoria();
   const first = deliveries && deliveries.length > 0 ? deliveries[0] : null;
   const streetName = first?.endereco_rua || first?.endereco_completo?.split(',')[0]?.trim() || 'Rua Principal';
   const houseNumber = first?.numero_casa || first?.endereco_numero || 'S/N';
@@ -86,7 +84,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
 
   // Recebedor
   const [receiverType, setReceiverType] = useState<string>(first?.recebedor_tipo || 'portaria');
-  const [receiverCustomText, setReceiverCustomText] = useState<string>(first?.recebedor_detalhes || '');
+  const [receiverCustomText, setReceiverCustomText] = useState<string>(isAllGroupDelivered ? first?.recebedor_detalhes || '' : '');
 
   // Familiar
   const [familyRelation, setFamilyRelation] = useState<string>('');
@@ -113,7 +111,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
     if (!file) return;
     try {
       setIsCompressingPhoto(true);
-      const compressed = await compressImage(file, 1400, 0.82);
+      const compressed = await compressImage(file, 1000, 0.7);
       if (type === 'pacote') {
         setFotoPacote(compressed);
       } else {
@@ -130,23 +128,12 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
 
   const canComplete = Boolean(fotoPacote) && Boolean(fotoLocal);
 
-  // Porteiros cadastrados na memória para este número
-  const savedDoormen = useMemo(() => {
-    if (!houseNumber) return [];
-    return getDoormenForAddress(streetName, houseNumber);
-  }, [streetName, houseNumber]);
-
-  // Familiares salvos na memória
-  const savedFamily = useMemo(() => {
-    if (!houseNumber) return [];
-    return getFamilyForAddress(streetName, houseNumber);
-  }, [streetName, houseNumber]);
-
-  // Vizinhos salvos na memória
-  const savedNeighbors = useMemo(() => {
-    if (!houseNumber) return [];
-    return getNeighborsForAddress(streetName, houseNumber);
-  }, [streetName, houseNumber]);
+  // Recebedores CONHECIDOS deste destino (só sugestão; o registro guarda quem recebeu de fato)
+  const conhecidos = (categoria: string) => sugerirRecebedores(memoria, destinoId, { categoria }).map((r) => r.rotulo);
+  const savedDoormen = useMemo(() => conhecidos('portaria'), [memoria, destinoId]);
+  const savedFamily = useMemo(() => conhecidos('familiar'), [memoria, destinoId]);
+  const savedNeighbors = useMemo(() => conhecidos('vizinho'), [memoria, destinoId]);
+  const savedTerceiros = useMemo(() => conhecidos('terceiros'), [memoria, destinoId]);
 
   // Atualiza horário e dados sempre que abrir
   useEffect(() => {
@@ -164,7 +151,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
     setShareFeedback(null);
     setIsEditingReceipt(false);
 
-    if (first?.recebedor_detalhes) {
+    if (isDone && first?.recebedor_detalhes) {
       setReceiverCustomText(first.recebedor_detalhes);
     } else if (savedDoormen.length === 1 && !receiverCustomText) {
       setReceiverCustomText(savedDoormen[0]);
@@ -254,29 +241,58 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
    * Copiar Texto do Grupo e Concluir
    * Trava de segurança: somente concede moedas para pacotes que ainda NÃO estavam entregues!
    */
+  /**
+   * Conclui a baixa do grupo: aplica a entrega a cada pacote selecionado e ensina a memória com quem
+   * recebeu DE FATO agora (o histórico conhecido apenas sugere; não prova quem recebeu hoje).
+   */
+  const concluirGrupo = (): DeliveryData[] => {
+    const agora = new Date().toISOString();
+
+    if (destinoId) {
+      let rotulo = '';
+      if (receiverType === 'portaria') {
+        rotulo = cleanDoormanName(receiverCustomText);
+      } else if (receiverType === 'familiar') {
+        rotulo = familyRelation
+          ? familyName.trim()
+            ? `${familyRelation} (${familyName.trim()})`
+            : familyRelation
+          : familyName.trim() || receiverCustomText.trim();
+      } else if (receiverType === 'vizinho') {
+        const numPart = neighborNumber.trim();
+        const namePart = neighborName.trim();
+        rotulo = numPart && namePart
+          ? (/^\d+/.test(numPart) ? `Nº ${numPart} (${namePart})` : `${numPart} (${namePart})`)
+          : (numPart ? (/^\d+/.test(numPart) ? `Nº ${numPart}` : numPart) : namePart || receiverCustomText.trim());
+      } else if (receiverType === 'terceiros' || receiverType === 'local_seguro') {
+        rotulo = receiverCustomText.trim();
+      }
+      if (rotulo.length >= 2) {
+        atualizar((m) => registrarRecebedor(m, destinoId, { categoria: receiverType, rotulo }, agora));
+      }
+    }
+
+    return (deliveries || []).map((d) => {
+      if (!selectedIds.includes(d.id_entrega)) return d;
+      const jaEntregue = d.status === 'entregue' || d.status === 'concluido';
+      return aplicarEntrega(
+        d,
+        {
+          recebedor_tipo: (receiverType as ReceiverType) || 'portaria',
+          recebedor_detalhes: computedReceiver,
+          foto_pacote_path: fotoPacote,
+          foto_local_path: fotoLocal,
+        },
+        jaEntregue ? d.data_hora_entrega || d.data_hora : agora
+      );
+    });
+  };
+
   const handleCopyAndConfirm = async (e?: React.MouseEvent) => {
     if (newlyDeliveredCount > 0) {
       try {
         triggerCoinBurst(newlyDeliveredCount * 2, 'Portaria / Condomínio', e || null);
       } catch (_err) {}
-    }
-
-    if (receiverType === 'portaria' && receiverCustomText.trim()) {
-      saveDoormanForAddress(streetName, houseNumber, receiverCustomText.trim());
-    } else if (receiverType === 'familiar') {
-      const famText = familyRelation
-        ? familyName.trim()
-          ? `${familyRelation} (${familyName.trim()})`
-          : familyRelation
-        : familyName.trim() || receiverCustomText.trim();
-      if (famText) saveFamilyForAddress(streetName, houseNumber, famText);
-    } else if (receiverType === 'vizinho') {
-      const numPart = neighborNumber.trim();
-      const namePart = neighborName.trim();
-      const vizText = numPart && namePart
-        ? (/^\d+/.test(numPart) ? `Nº ${numPart} (${namePart})` : `${numPart} (${namePart})`)
-        : (numPart ? (/^\d+/.test(numPart) ? `Nº ${numPart}` : numPart) : namePart || receiverCustomText.trim());
-      if (vizText) saveNeighborForAddress(streetName, houseNumber, vizText);
     }
 
     await copyTextToClipboard(currentMessage);
@@ -287,26 +303,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
         : '📋 Texto copiado com sucesso!'
     );
 
-    const nowIso = new Date().toISOString();
-    const updated = (deliveries || []).map((d) => {
-      if (selectedIds.includes(d.id_entrega)) {
-        const upItem = {
-          ...d,
-          status: 'entregue' as const,
-          recebedor_detalhes: computedReceiver,
-          recebedor_tipo: (receiverType as any) || 'portaria',
-          foto_pacote_path: fotoPacote || d.foto_pacote_path || '',
-          foto_local_path: fotoLocal || d.foto_local_path || '',
-          data_hora: d.data_hora || nowIso,
-        };
-        try {
-          enqueueDeliveryForSync(upItem);
-        } catch (_e) {}
-        return upItem;
-      }
-      return d;
-    });
-
+    const updated = concluirGrupo();
     if (onConfirmGroupDelivery) {
       onConfirmGroupDelivery(updated);
     }
@@ -326,30 +323,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
       } catch (_err) {}
     }
 
-    if (receiverType === 'portaria' && receiverCustomText.trim()) {
-      saveDoormanForAddress(streetName, houseNumber, receiverCustomText.trim());
-    }
-
-    const nowIso = new Date().toISOString();
-    const updated = (deliveries || []).map((d) => {
-      if (selectedIds.includes(d.id_entrega)) {
-        const upItem = {
-          ...d,
-          status: 'entregue' as const,
-          recebedor_detalhes: computedReceiver,
-          recebedor_tipo: (receiverType as any) || 'portaria',
-          foto_pacote_path: fotoPacote || d.foto_pacote_path || '',
-          foto_local_path: fotoLocal || d.foto_local_path || '',
-          data_hora: d.data_hora || nowIso,
-        };
-        try {
-          enqueueDeliveryForSync(upItem);
-        } catch (_e) {}
-        return upItem;
-      }
-      return d;
-    });
-
+    const updated = concluirGrupo();
     if (onConfirmGroupDelivery) {
       onConfirmGroupDelivery(updated);
     }
@@ -524,7 +498,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
             {(fotoPacote || fotoLocal || first?.foto_pacote_path || first?.foto_local_path) && (
               <div className="bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-3.5 space-y-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 block">
-                  Fotos Salvas no SafaSanhaso:
+                  Fotos da entrega:
                 </span>
                 <div className="grid grid-cols-2 gap-2">
                   {(fotoPacote || first?.foto_pacote_path) && (
@@ -653,7 +627,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-black text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
                       <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 stroke-[2.5]" />
-                      <span>Porteiros cadastrados no Nº {houseNumber}:</span>
+                      <span>Porteiros conhecidos neste destino:</span>
                     </span>
                     <span className="text-[10px] font-black text-amber-800 dark:text-amber-300 bg-amber-200/70 dark:bg-amber-900/60 px-2 py-0.5 rounded-md">
                       Memória
@@ -754,7 +728,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
                     <div className="pt-1 space-y-1.5 border-t border-slate-200/60 dark:border-slate-800/80">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                          Salvos no Nº {houseNumber}:
+                          Conhecidos neste destino:
                         </span>
                         <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">1 toque</span>
                       </div>
@@ -842,7 +816,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
                     <div className="pt-1 space-y-1.5 border-t border-slate-200/60 dark:border-slate-800/80">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                          Vizinhos salvos no Nº {houseNumber}:
+                          Vizinhos conhecidos neste destino:
                         </span>
                         <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">1 toque</span>
                       </div>
@@ -910,6 +884,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
                   <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
                     Identificação de quem recebeu:
                   </label>
+                  <RecebedoresConhecidos nomes={savedTerceiros} atual={receiverCustomText} onEscolher={setReceiverCustomText} />
                   <input
                     type="text"
                     value={receiverCustomText}
@@ -922,7 +897,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
               )}
             </div>
 
-            {/* FOTOS OBRIGATÓRIAS DO GRUPO (SAFASANHASO / LOGISCAN) */}
+            {/* FOTOS OBRIGATÓRIAS DO GRUPO */}
             <div className="space-y-2.5 bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-2xs">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
@@ -944,7 +919,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
               </div>
 
               <p className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold leading-tight">
-                Tire a foto dos <b>pacotes com etiquetas/QR Code visíveis</b> e a foto da <b>fachada/portaria</b>. Ambas são transmitidas diretamente para o SafaSanhaso.
+                Tire a foto dos <b>pacotes com etiquetas/QR Code visíveis</b> e a foto da <b>fachada/portaria</b>. Ambas ficam salvas no registro da entrega como prova da baixa.
               </p>
 
               <div className="grid grid-cols-2 gap-2.5 pt-1">

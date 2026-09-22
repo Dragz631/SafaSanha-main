@@ -1,4 +1,12 @@
-export type ReceiverType = 'proprio_morador' | 'vizinho' | 'estabelecimento' | 'associacao';
+export type ReceiverType =
+  | 'proprio_morador'
+  | 'vizinho'
+  | 'estabelecimento'
+  | 'associacao'
+  | 'portaria'
+  | 'familiar'
+  | 'terceiros'
+  | 'local_seguro';
 
 export type DeliveryStatus =
   | 'aguardando_rua'
@@ -52,6 +60,11 @@ export interface DeliveryData {
   sub_rua_manilha?: string; // e.g. "Rua Leão XIII", "Rua do Canal", "Rua A", "Rua B", etc.
   endereco_numero?: string;
   endereco_complemento?: string; // e.g. Apto 101, Bloco B
+  /**
+   * Destino conhecido a que este pacote está vinculado (rua|número|contexto — ver src/domain).
+   * Ausente = ainda não confirmado (pendente de confirmação quando há ambiguidade).
+   */
+  destino_id?: string;
   associacao_id?: string;
   associacao_nome?: string;
   // FASE 1 - Operational V1 Fields
@@ -77,46 +90,3 @@ export interface CompletedDayRecord {
     qtd_entregues: number;
   }>;
 }
-
-export interface GeofenceConfig {
-  tipo: 'circulo' | 'poligono';
-  centro_lat?: number;
-  centro_lng?: number;
-  raio_metros?: number;
-  pontos?: Array<{ lat: number; lng: number }>;
-  descricao_area?: string;
-}
-
-export interface AssociationArea {
-  id: string;
-  nome: string; // e.g. "Associação do Cremate"
-  recebedor_padrao: string; // e.g. "Sede da Associação (Sr. Antenor)"
-  ruas: string[]; // e.g. ["Travessa do Cremate", "Rua Esperança"]
-  ruasVinculadas?: string[]; // Alias for ruas
-  bairros?: string[]; // e.g. ["Parque Alegria", "Vila Cremate"]
-  moradores?: string[]; // e.g. ["Dona Maria", "Sr. Antenor", "João da Silva"]
-  moradoresVinculados?: string[]; // Alias for moradores
-  excecoes_enderecos?: string[]; // Endereços/prédios excluídos da cerca virtual (entrega em rua comum)
-  cor: string; // e.g. "emerald", "blue", "purple", "amber"
-  descricao?: string;
-  cerca_virtual?: GeofenceConfig;
-}
-
-export interface AssociationMemoryRecord {
-  id: string;
-  nome_destinatario: string; // e.g. "João da Silva"
-  endereco: string; // e.g. "Rua Paraíso, 123"
-  bairro?: string;
-  associacao_id: string;
-  associacao_nome: string;
-  data_vinculo: string;
-  origem: 'manual' | 'ia' | 'historico';
-}
-
-export interface BarcodeScanResult {
-  success: boolean;
-  code: string | null;
-  format?: string;
-  message?: string;
-}
-

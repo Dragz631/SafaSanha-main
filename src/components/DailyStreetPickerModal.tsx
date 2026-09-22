@@ -13,6 +13,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { DAILY_STREET_CARDS, DailyStreetCardItem } from '../data/cajuStreets';
+import { pacotesDaRua } from '../domain/ruas';
 import { DeliveryData } from '../types';
 
 interface DailyStreetPickerModalProps {
@@ -59,14 +60,8 @@ export const DailyStreetPickerModal: React.FC<DailyStreetPickerModalProps> = ({
   // Contagem de pacotes para cada rua/setor nas entregas carregadas
   const packageCountByStreet = useMemo(() => {
     const counts = new Map<string, number>();
-    deliveries.forEach((d) => {
-      const rua = (d.endereco_rua || d.endereco_completo || '').toLowerCase().trim();
-      DAILY_STREET_CARDS.forEach((card) => {
-        const target = card.streetName.toLowerCase();
-        if (rua.includes(target) || target.includes(rua)) {
-          counts.set(target, (counts.get(target) || 0) + 1);
-        }
-      });
+    DAILY_STREET_CARDS.forEach((card) => {
+      counts.set(card.streetName.toLowerCase(), pacotesDaRua(deliveries, card.streetName).length);
     });
     return counts;
   }, [deliveries]);

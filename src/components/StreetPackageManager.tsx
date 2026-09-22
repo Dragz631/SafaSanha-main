@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { DeliveryData } from '../types';
 import { PackageCard } from './PackageCard';
-import { HouseGroupCard } from './HouseGroupCard';
+import { NumeroCard } from './NumeroCard';
 import { ManilhaSubStreetCard } from './ManilhaSubStreetCard';
 import { GroupedDeliveryWhatsAppModal } from './GroupedDeliveryWhatsAppModal';
 import { QuickPackageScannerModal } from './QuickPackageScannerModal';
@@ -36,56 +36,15 @@ import { DeliveryWhatsAppModal } from './DeliveryWhatsAppModal';
 import { RegionStreetsModal } from './RegionStreetsModal';
 import { QuickBatchAddModal } from './QuickBatchAddModal';
 import { triggerCoinBurst } from '../utils/rewardEffect';
-import { StreetAddressMemoryModal } from './StreetAddressMemoryModal';
 import { QuickMemoryManager } from './QuickMemoryManager';
 import { StreetCompletedModal } from './StreetCompletedModal';
-import { saveAddressToMemory, getSavedAddressesForStreet } from '../utils/addressMemoryStorage';
-import {
-  getStreetInfo,
-  MANILHA_SUB_STREETS,
-  isManilhaDelivery,
-  getManilhaSubStreet
-} from '../data/cajuStreets';
-
-
-export type ComplementGroupType = 'portaria' | 'vila' | 'residencia';
-
-export const classifyComplementType = (comp?: string): ComplementGroupType => {
-  if (!comp) return 'residencia';
-  const c = comp.toLowerCase().trim();
-
-  // Prédio / Apartamento / Portaria
-  if (
-    c.includes('apto') ||
-    c.includes('apartamento') ||
-    c.includes('bloco') ||
-    c.includes('sala') ||
-    c.includes('conjunto') ||
-    c.includes('condominio') ||
-    c.includes('cond.') ||
-    c.includes('cobertura') ||
-    c.includes('edificio') ||
-    c.includes('ed.')
-  ) {
-    return 'portaria';
-  }
-
-  // Vila / Casas
-  if (
-    c.includes('casa') ||
-    c.includes('vila') ||
-    c.includes('fundos') ||
-    c.includes('frente') ||
-    c.includes('sobrado') ||
-    c.includes('terreo') ||
-    c.includes('vilinha') ||
-    c.includes('bione')
-  ) {
-    return 'vila';
-  }
-
-  return 'residencia';
-};
+import { SugestoesDestino } from './SugestoesDestino';
+import { getStreetInfo, MANILHA_SUB_STREETS, getManilhaSubStreet } from '../data/cajuStreets';
+import { useMemoria } from '../state/MemoriaContext';
+import { agruparRua, destinoIdDoPacote, enderecoDoPacote, filtrarGrupos, type GrupoNumero } from '../domain/agrupamento';
+import { cadastrarPacote, confirmarDestino, corrigirPacote, gerarCodigoManual, montarPacote } from '../domain/cadastro';
+import { contarPacotes, ehAreaManilha, pacotesDaRua, statusEntregue } from '../domain/ruas';
+import { aplicarEntrega, aplicarInsucesso, reabrirPacote } from '../domain/entrega';
 
 interface StreetPackageManagerProps {
   deliveries: DeliveryData[];
@@ -128,17 +87,15 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
 }) => {
   // Modais locais
   const [internalRegionModalOpen, setInternalRegionModalOpen] = useState<boolean>(false);
+  // OCR por etiqueta: pendente de decisão de produto — nenhum botão abre este modal ainda.
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
-  const [isManualModalOpen, setIsManualModalOpen] = useState<boolean>(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState<boolean>(false);
-  const [isMemoryModalOpen, setIsMemoryModalOpen] = useState<boolean>(false);
   const [editingDelivery, setEditingDelivery] = useState<DeliveryData | null>(null);
   
+  const { memoria, atualizar } = useMemoria();
+
   // Identifica se a área ativa é o Setor Unificado da Manilha
-  const isManilhaActive = useMemo(() => {
-    const clean = activeStreet.toLowerCase().trim();
-    return clean === 'manilha' || clean.includes('manilha') || clean.includes('penha');
-  }, [activeStreet]);
+  const isManilhaActive = useMemo(() => ehAreaManilha(activeStreet), [activeStreet]);
 
   // Sub-rua selecionada para cadastro rápido na Manilha
   const [manilhaSubStreet, setManilhaSubStreet] = useState<string>('Rua Leão XIII');
@@ -168,21 +125,6 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   const [sortBy, setSortBy] = useState<'numero_asc' | 'numero_desc' | 'pendentes_primeiro' | 'hora_desc' | 'codigo'>('numero_asc');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [cadastroTab, setCadastroTab] = useState<'rapido' | 'digitar'>('rapido');
-
-  // Casas salvas na memória para esta rua
-  const savedAddressesForActiveStreet = useMemo(() => {
-    return getSavedAddressesForStreet(isManilhaActive ? 'Manilha' : activeStreet);
-  }, [activeStreet, isManilhaActive, isMemoryModalOpen, deliveries]);
-
-  // Sugestões instantâneas ao digitar número
-  const quickNumberSuggestions = useMemo(() => {
-    if (!quickHouseNumber.trim()) return [];
-    const clean = quickHouseNumber.trim().toLowerCase();
-    const match = savedAddressesForActiveStreet.find(
-      (h) => h.houseNumber.toLowerCase() === clean
-    );
-    return match ? match.residents : [];
-  }, [quickHouseNumber, savedAddressesForActiveStreet]);
 
   const regionModalOpen = isRegionModalOpen !== undefined ? isRegionModalOpen : internalRegionModalOpen;
   const openRegionModal = onOpenRegionModal || (() => setInternalRegionModalOpen(true));
@@ -247,31 +189,15 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   };
 
   // Pacotes pertencentes à rua/área ativa
-  const streetDeliveries = useMemo(() => {
-    if (isManilhaActive) {
-      return deliveries.filter((d) => isManilhaDelivery(d));
-    }
-    const cleanActive = activeStreet.trim().toLowerCase();
-    return deliveries.filter((d) => {
-      const st = (d.endereco_rua || '').trim().toLowerCase();
-      if (st && (st === cleanActive || cleanActive.includes(st) || st.includes(cleanActive))) {
-        return true;
-      }
-      if (isManilhaDelivery(d)) return false;
-      const comp = (d.endereco_completo || '').toLowerCase();
-      return comp.includes(cleanActive) || cleanActive.includes(comp);
-    });
-  }, [deliveries, activeStreet, isManilhaActive]);
+  const streetDeliveries = useMemo(() => pacotesDaRua(deliveries, activeStreet), [deliveries, activeStreet]);
 
-  // Contadores da rua ativa
-  const totalCount = streetDeliveries.length;
-  const deliveredCount = streetDeliveries.filter(
-    (d) => d.status === 'entregue' || d.status === 'concluido'
-  ).length;
-  const insucessoCount = streetDeliveries.filter(
-    (d) => d.status === 'insucesso'
-  ).length;
-  const pendingCount = totalCount - deliveredCount - insucessoCount;
+  // Contadores da rua ativa (mesma contagem do topo, do Resumo e dos seletores de rua)
+  const {
+    total: totalCount,
+    entregues: deliveredCount,
+    insucessos: insucessoCount,
+    pendentes: pendingCount,
+  } = useMemo(() => contarPacotes(streetDeliveries), [streetDeliveries]);
 
   // Lista de pacotes que tiveram insucesso nesta rua
   const failedDeliveries = useMemo(
@@ -334,41 +260,26 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
       return;
     }
 
-    const client = quickClientName.trim() || 'Morador';
     const comp = quickComplement.trim();
-    const code = `#${Math.floor(1000 + Math.random() * 9000)}`;
+    const agora = new Date().toISOString();
 
-    const targetStreet = isManilhaActive ? 'Manilha' : activeStreet;
-    const targetSub = isManilhaActive ? manilhaSubStreet : undefined;
-    const fullAddress = isManilhaActive
-      ? `${manilhaSubStreet}, ${cleanNum}${comp ? ` (${comp})` : ''} (Manilha • Caju)`
-      : `${activeStreet}, ${cleanNum}${comp ? ` (${comp})` : ''}`;
+    const novo = montarPacote(
+      {
+        rua: isManilhaActive ? 'Manilha' : activeStreet,
+        subRuaManilha: isManilhaActive ? manilhaSubStreet : undefined,
+        numero: cleanNum,
+        complemento: comp,
+        nome: quickClientName,
+      },
+      agora,
+      deliveries.map((d) => d.codigo_pacote)
+    );
 
-    const newDelivery: DeliveryData = {
-      id_entrega: `del_${Date.now()}`,
-      codigo_pacote: code,
-      nome_destinatario: client,
-      recebedor_detalhes: client,
-      recebedor_tipo: 'proprio_morador',
-      endereco_rua: targetStreet,
-      sub_rua_manilha: targetSub,
-      numero_casa: cleanNum,
-      endereco_numero: cleanNum,
-      complemento: comp || undefined,
-      endereco_completo: fullAddress,
-      foto_pacote_path: '',
-      foto_local_path: '',
-      data_hora: new Date().toISOString(),
-      status: 'aguardando_rua',
-      origem_leitura: 'manual',
-    };
-
-    // Salva imediatamente na memória da rua
-    try {
-      saveAddressToMemory(targetStreet, cleanNum, comp || undefined, client, targetSub);
-    } catch (_err) {}
-
-    onAddDelivery(newDelivery);
+    // Vincula ao destino conhecido só quando a identidade é clara; se houver ambiguidade, o pacote entra
+    // SEM vínculo (fica "pendente de confirmação") e a memória não aprende nada até o operador confirmar.
+    const r = cadastrarPacote(memoria, novo, agora);
+    atualizar(() => r.memoria);
+    onAddDelivery(r.pacote);
     setFilterStatus('todos');
     setSearchQuery('');
 
@@ -376,7 +287,10 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
       if ('vibrate' in navigator) navigator.vibrate(40);
     } catch (_e) {}
 
-    const toastMsg = isManilhaActive
+    const rotuloRua = isManilhaActive ? `${manilhaSubStreet} ` : '';
+    const toastMsg = r.pendente
+      ? `⚠️ ${rotuloRua}Nº ${cleanNum} adicionado — confirme o destino abaixo`
+      : isManilhaActive
       ? `✅ ${manilhaSubStreet} Nº ${cleanNum} adicionado na Manilha!`
       : `✅ Nº ${cleanNum} ${comp ? `(${comp})` : ''} adicionado!`;
 
@@ -462,97 +376,78 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     }).filter((g) => g.count > 0);
   }, [isManilhaActive, sortedDeliveries]);
 
-  // Agrupamento Inteligente por Número E Complemento (Diferencia Vila e Apartamento no mesmo número!)
-  const groupedHouses = useMemo(() => {
-    // 1. Mapeia todos os pacotes pelo número da casa
-    const houseNumberMap = new Map<string, DeliveryData[]>();
+  // Organização da rua: Nº → destino → unidade → pacote (a lógica vive em src/domain/agrupamento.ts).
+  // Calculada sobre TODOS os pacotes da rua; busca/filtro só escondem, nunca reclassificam.
+  const grupos = useMemo(() => {
+    const visiveis = new Set(sortedDeliveries.map((d) => d.id_entrega));
+    const lista = filtrarGrupos(agruparRua(streetDeliveries, memoria), (p) => visiveis.has(p.id_entrega));
+    if (sortBy === 'numero_asc') return lista;
+    if (sortBy === 'numero_desc') return [...lista].reverse();
+    // demais ordenações: pela posição do primeiro pacote de cada número na lista já ordenada
+    const pos = new Map(sortedDeliveries.map((d, i) => [d.id_entrega, i]));
+    const menor = (g: GrupoNumero) =>
+      Math.min(...[...g.destinos.flatMap((d) => d.pacotes), ...g.pendentes.map((p) => p.pacote)].map((p) => pos.get(p.id_entrega) ?? 0));
+    return [...lista].sort((a, b) => menor(a) - menor(b));
+  }, [streetDeliveries, sortedDeliveries, memoria, sortBy]);
 
-    sortedDeliveries.forEach((d) => {
-      const num = d.numero_casa || d.endereco_numero || 'S/N';
-      if (!houseNumberMap.has(num)) {
-        houseNumberMap.set(num, []);
-      }
-      houseNumberMap.get(num)!.push(d);
-    });
+  const pendentesDeConfirmacao = useMemo(() => grupos.reduce((acc, g) => acc + g.pendentes.length, 0), [grupos]);
 
-    interface SubGroupItem {
-      groupKey: string;
-      houseNumber: string;
-      category: 'portaria' | 'vila' | 'residencia';
-      groupLabel: string;
-      items: DeliveryData[];
-      count: number;
-      hasMultiple: boolean;
+  /** Troca rápida de status (menu do card individual) com as MESMAS regras de horário/motivo das baixas. */
+  const mudarStatusRapido = (d: DeliveryData, status: DeliveryData['status']): DeliveryData => {
+    const agora = new Date().toISOString();
+    if (status === 'entregue' || status === 'concluido') {
+      return aplicarEntrega(d, { recebedor_tipo: d.recebedor_tipo, recebedor_detalhes: d.recebedor_detalhes }, agora);
     }
+    if (status === 'aguardando_rua') return reabrirPacote(d, agora);
+    if (status === 'insucesso') return aplicarInsucesso(d, d.motivo_insucesso || 'Morador ausente / Ninguém atende', agora);
+    return { ...d, status };
+  };
 
-    const groups: SubGroupItem[] = [];
+  const enderecoMudou = (a: DeliveryData, b: DeliveryData) => enderecoDoPacote(a).destinoId !== enderecoDoPacote(b).destinoId;
 
-    // 2. Para cada número, separa em grupos dedicados:
-    //    - Prédio / Apartamentos (Portaria)
-    //    - Vila de Casas (Entrega individual)
-    //    - Residência única (Sem complemento ou morador único)
-    houseNumberMap.forEach((items, houseNumber) => {
-      const aptoItems: DeliveryData[] = [];
-      const vilaItems: DeliveryData[] = [];
-      const residenciaItems: DeliveryData[] = [];
+  /** Salva um pacote alterado por um modal; se o endereço mudou (ou não há vínculo), refaz o vínculo ao destino. */
+  const salvarPacoteAtualizado = (atualizado: DeliveryData, original?: DeliveryData | null) => {
+    const refazer = !atualizado.destino_id || (original ? enderecoMudou(original, atualizado) : false);
+    if (refazer) {
+      const r = cadastrarPacote(memoria, { ...atualizado, destino_id: undefined }, new Date().toISOString());
+      atualizar(() => r.memoria);
+      onUpdateDelivery(r.pacote);
+    } else {
+      onUpdateDelivery(atualizado);
+    }
+  };
 
-      items.forEach((d) => {
-        const cat = classifyComplementType(d.complemento || d.endereco_complemento);
-        if (cat === 'portaria') {
-          aptoItems.push(d);
-        } else if (cat === 'vila') {
-          vilaItems.push(d);
-        } else {
-          residenciaItems.push(d);
-        }
-      });
+  /** O operador confirmou o destino de um pacote pendente. Só agora a memória aprende com ele. */
+  const handleConfirmarDestino = (pacote: DeliveryData, destinoId: string) => {
+    const r = confirmarDestino(memoria, pacote, destinoId, new Date().toISOString());
+    atualizar(() => r.memoria);
+    onUpdateDelivery(r.pacote);
+    setQuickToast('✅ Destino confirmado');
+    setTimeout(() => setQuickToast(null), 2000);
+  };
 
-      // SE HOUVER APARTAMENTOS: Cria Card dedicado de Prédio / Portaria
-      if (aptoItems.length > 0) {
-        groups.push({
-          groupKey: `${houseNumber}_portaria`,
-          houseNumber,
-          category: 'portaria',
-          groupLabel: `Nº ${houseNumber} • Prédio / Apartamentos`,
-          items: aptoItems,
-          count: aptoItems.length,
-          hasMultiple: aptoItems.length > 1,
-        });
-      }
-
-      // SE HOUVER VILA DE CASAS: Cria Card dedicado de Vila (Entrega de casa em casa!)
-      if (vilaItems.length > 0) {
-        // Se houver residências avulsas neste número que também tem vila, incorpora na vila
-        const mergedVila = [...vilaItems, ...residenciaItems];
-        groups.push({
-          groupKey: `${houseNumber}_vila`,
-          houseNumber,
-          category: 'vila',
-          groupLabel: `Nº ${houseNumber} • Vila de Casas`,
-          items: mergedVila,
-          count: mergedVila.length,
-          hasMultiple: mergedVila.length > 1,
-        });
-      } else if (residenciaItems.length > 0) {
-        // Apenas residência normal
-        groups.push({
-          groupKey: `${houseNumber}_residencia`,
-          houseNumber,
-          category: 'residencia',
-          groupLabel: `Nº ${houseNumber}`,
-          items: residenciaItems,
-          count: residenciaItems.length,
-          hasMultiple: residenciaItems.length > 1,
-        });
-      }
-    });
-
-    return groups;
-  }, [sortedDeliveries]);
-
-  const multipleHousesCount = useMemo(() => {
-    return groupedHouses.filter((g) => g.hasMultiple).length;
-  }, [groupedHouses]);
+  /** Correção manual do endereço/nome/código (preserva status, fotos e recebedor). */
+  const handleSalvarCorrecao = (dados: DeliveryData) => {
+    if (!editingDelivery) return;
+    const r = corrigirPacote(
+      memoria,
+      editingDelivery,
+      {
+        rua: editingDelivery.endereco_rua || activeStreet,
+        subRuaManilha: editingDelivery.sub_rua_manilha,
+        numero: dados.numero_casa || 'S/N',
+        complemento: dados.complemento,
+        nome: dados.nome_destinatario,
+        codigo: dados.codigo_pacote,
+      },
+      new Date().toISOString()
+    );
+    atualizar(() => r.memoria);
+    onUpdateDelivery(r.pacote);
+    setEditingDelivery(null);
+    setQuickToast(r.pendente ? '⚠️ Endereço corrigido — confirme o destino' : '✅ Pacote corrigido');
+    setTimeout(() => setQuickToast(null), 2200);
+  };
 
   // Toggle rápido da direção de número de casas (1->100 vs 100->1)
   const toggleSortDirection = () => {
@@ -899,6 +794,17 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
               </button>
             </div>
 
+            {/* Destinos já conhecidos neste número (sugestão: nada é vinculado até adicionar) */}
+            <SugestoesDestino
+              rua={isManilhaActive ? manilhaSubStreet : activeStreet}
+              numero={quickHouseNumber}
+              complemento={quickComplement}
+              onEscolher={({ complemento, nome }) => {
+                setQuickComplement(complemento);
+                if (nome) setQuickClientName(nome);
+              }}
+            />
+
             {/* Linha 2: Nome do Morador + Botão de Adicionar */}
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
@@ -1068,6 +974,15 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         </div>
       </div>
 
+      {pendentesDeConfirmacao > 0 && (
+        <div role="status" className="rounded-2xl border border-amber-500/50 bg-amber-950/30 text-amber-200 text-xs font-bold p-3 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            {pendentesDeConfirmacao} pacote(s) aguardando confirmação de destino. O sistema não escolhe sozinho quando o mesmo número tem mais de um local.
+          </span>
+        </div>
+      )}
+
       {/* 4. MODOS DE VISUALIZAÇÃO */}
       <div className="px-0.5">
         <div className="grid grid-cols-2 p-1 bg-slate-900/90 rounded-xl border border-slate-800/80 gap-1 shadow-sm">
@@ -1082,7 +997,7 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
             <span>
               {isManilhaActive
                 ? `🏗️ Ruas Manilha (${manilhaSubGroups.length})`
-                : `🏢 Por Casas (${groupedHouses.length})`}
+                : `🏢 Por Casas (${grupos.length})`}
             </span>
           </button>
 
@@ -1109,6 +1024,9 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                 key={group.subDef.id}
                 subStreetDef={group.subDef}
                 deliveries={group.items}
+                todos={streetDeliveries.filter((d) => getManilhaSubStreet(d).toLowerCase() === group.subDef.name.toLowerCase())}
+                onConfirmarDestino={handleConfirmarDestino}
+                onMudarStatus={mudarStatusRapido}
                 viewMode={viewMode}
                 onOpenSingleDeliveryModal={(del, mode) => handleOpenDeliveryModal(del, mode || 'entrega')}
                 onOpenGroupDeliveryModal={(items) => handleOpenGroupDeliveryModal(items)}
@@ -1139,23 +1057,15 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
           /* VISUALIZAÇÃO DE RUA NORMAL DO CAJU */
           sortedDeliveries.length > 0 ? (
             viewMode === 'grouped' ? (
-              groupedHouses.map((group) => (
-                <HouseGroupCard
-                  key={group.groupKey || group.houseNumber}
-                  houseNumber={group.houseNumber}
-                  forcedCategory={group.category}
-                  groupLabel={group.groupLabel}
-                  deliveries={group.items}
+              grupos.map((grupo) => (
+                <NumeroCard
+                  key={grupo.numeroChave}
+                  grupo={grupo}
                   onOpenSingleDeliveryModal={(del, mode) => handleOpenDeliveryModal(del, mode || 'entrega')}
                   onOpenGroupDeliveryModal={(items) => handleOpenGroupDeliveryModal(items)}
                   onEditDelivery={(del) => setEditingDelivery(del)}
                   onDeleteDelivery={(id) => onDeleteDelivery(id)}
-                  onUpdateDelivery={(del) => {
-                    onUpdateDelivery(del);
-                    if (del.status === 'entregue' || del.status === 'concluido') {
-                      triggerReward(1, del.nome_destinatario);
-                    }
-                  }}
+                  onConfirmarDestino={handleConfirmarDestino}
                 />
               ))
             ) : (
@@ -1171,17 +1081,14 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
                   onDeleteClick={(id) => onDeleteDelivery(id)}
                   onDelete={(id) => onDeleteDelivery(id)}
                   onQuickStatusChange={(del, status) => {
-                    onUpdateDelivery({ ...del, status });
+                    onUpdateDelivery(mudarStatusRapido(del, status));
                     if (status === 'entregue' || status === 'concluido') {
                       triggerReward(1, del.nome_destinatario);
                     }
                   }}
                   onToggleStatus={(del) => {
                     const targetStatus = del.status === 'entregue' ? 'aguardando_rua' : 'entregue';
-                    onUpdateDelivery({
-                      ...del,
-                      status: targetStatus,
-                    });
+                    onUpdateDelivery(mudarStatusRapido(del, targetStatus));
                     if (targetStatus === 'entregue') {
                       triggerReward(1, del.nome_destinatario);
                     }
@@ -1218,14 +1125,12 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         onRenameStreet={onRenameStreet}
       />
 
-      {/* MODAL DE CADASTRO MANUAL COMPLETO */}
+      {/* CORREÇÃO MANUAL DO PACOTE (endereço, complemento, nome, código) */}
       <ManualPackageModal
-        isOpen={isManualModalOpen}
-        onClose={() => setIsManualModalOpen(false)}
-        onSave={(data) => {
-          onAddDelivery(data);
-          setIsManualModalOpen(false);
-        }}
+        isOpen={!!editingDelivery}
+        initialDelivery={editingDelivery}
+        onClose={() => setEditingDelivery(null)}
+        onSave={handleSalvarCorrecao}
         activeStreet={activeStreet}
       />
 
@@ -1234,13 +1139,38 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         isOpen={isBatchModalOpen}
         onClose={() => setIsBatchModalOpen(false)}
         activeStreet={activeStreet}
-        onSaveBatch={(batch) => {
-          if (onAddBatchDeliveries) {
-            onAddBatchDeliveries(batch);
-          } else {
-            batch.forEach((d) => onAddDelivery(d));
-          }
+        onAddBatch={(batch) => {
+          const agora = new Date().toISOString();
+          const usados = new Set(deliveries.map((d) => d.codigo_pacote));
+          let mem = memoria;
+          let pendentes = 0;
+          const salvos = batch.map((b) => {
+            const codigo = usados.has(b.codigo_pacote) ? gerarCodigoManual(usados) : b.codigo_pacote;
+            usados.add(codigo);
+            // Na Manilha o lote vale para a sub-rua selecionada.
+            const base: DeliveryData = {
+              ...b,
+              codigo_pacote: codigo,
+              data_hora_entrada: b.data_hora,
+              sub_rua_manilha: isManilhaActive ? manilhaSubStreet : undefined,
+              endereco_completo: isManilhaActive ? `${manilhaSubStreet}, ${b.numero_casa}${b.complemento ? ` (${b.complemento})` : ''} (Manilha • Caju)` : b.endereco_completo,
+            };
+            const r = cadastrarPacote(mem, base, agora);
+            mem = r.memoria;
+            if (r.pendente) pendentes++;
+            return r.pacote;
+          });
+          atualizar(() => mem);
+          if (onAddBatchDeliveries) onAddBatchDeliveries(salvos);
+          else salvos.forEach((d) => onAddDelivery(d));
           setIsBatchModalOpen(false);
+          setFilterStatus('todos');
+          setQuickToast(
+            pendentes > 0
+              ? `⚠️ ${salvos.length} pacote(s) adicionado(s) — ${pendentes} aguardando confirmação de destino`
+              : `✅ ${salvos.length} pacote(s) adicionado(s)`
+          );
+          setTimeout(() => setQuickToast(null), 3000);
         }}
       />
 
@@ -1249,53 +1179,28 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
         <DeliveryWhatsAppModal
           isOpen={true}
           delivery={selectedForDelivery}
-          mode={deliveryModalMode}
+          destinoId={destinoIdDoPacote(selectedForDelivery, streetDeliveries, memoria)}
+          initialMode={deliveryModalMode}
           onClose={() => setSelectedForDelivery(null)}
           onConfirmDelivery={(updated) => {
-            onUpdateDelivery(updated);
-            setSelectedForDelivery(null);
-          }}
-          onSaveDelivery={(updated) => {
-            onUpdateDelivery(updated);
-            setSelectedForDelivery(null);
-          }}
-          onConfirmDelivered={() => {
-            if (selectedForDelivery) {
-              const updated = { ...selectedForDelivery, status: 'entregue' as const };
-              onUpdateDelivery(updated);
-            }
+            salvarPacoteAtualizado(updated, selectedForDelivery);
             setSelectedForDelivery(null);
           }}
         />
       )}
 
-      {/* MODAL WHATSAPP PARA ENTREGA EM GRUPO / PORTARIA */}
+      {/* MODAL WHATSAPP PARA ENTREGA EM GRUPO (mesmo destino) */}
       {selectedGroupForDelivery && (
         <GroupedDeliveryWhatsAppModal
           isOpen={true}
           deliveries={selectedGroupForDelivery}
+          destinoId={destinoIdDoPacote(selectedGroupForDelivery[0], streetDeliveries, memoria)}
           onClose={() => setSelectedGroupForDelivery(null)}
           onConfirmGroupDelivery={handleConfirmGroupDelivery}
-          onConfirmDelivery={handleConfirmGroupDelivery}
         />
       )}
 
-      {/* MODAL DO CADERNO DE CASAS E MORADORES SALVOS */}
-      <StreetAddressMemoryModal
-        isOpen={isMemoryModalOpen}
-        onClose={() => setIsMemoryModalOpen(false)}
-        streetName={isManilhaActive ? 'Manilha' : activeStreet}
-        currentDeliveries={deliveries}
-        onAddSelectedPackages={(newPackages) => {
-          if (onAddBatchDeliveries) {
-            onAddBatchDeliveries(newPackages);
-          } else {
-            newPackages.forEach((p) => onAddDelivery(p));
-          }
-          setQuickToast(`Adicionado(s) ${newPackages.length} pacote(s) da memória!`);
-          setTimeout(() => setQuickToast(null), 2500);
-        }}
-      />
+
       {/* Modal de Celebração de Rua Finalizada & Decisão de Insucessos */}
       <StreetCompletedModal
         isOpen={isStreetCompletedModalOpen}

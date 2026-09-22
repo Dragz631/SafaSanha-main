@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { Header } from './components/Header';
 import { FloatingMoneyReward } from './components/FloatingMoneyReward';
 import { CashCelebrationBurst } from './components/CashCelebrationBurst';
@@ -7,11 +8,14 @@ import { GeneralSummaryTab } from './components/GeneralSummaryTab';
 import { CloseDayModal } from './components/CloseDayModal';
 import { AssociationTab } from './components/AssociationTab';
 import { DailyStreetPickerModal } from './components/DailyStreetPickerModal';
-import { DeliveryWhatsAppModal } from './components/DeliveryWhatsAppModal';
 import { DeliveryData } from './types';
-import { INITIAL_DELIVERIES } from './data/sampleData';
-import { CAJU_PRIMARY_AREAS, isManilhaDelivery } from './data/cajuStreets';
-import { syncStreetsPlan } from './services/safasanhasoClient';
+import { CAJU_PRIMARY_AREAS } from './data/cajuStreets';
+import { MemoriaProvider } from './state/MemoriaContext';
+import { contarPacotes, pacotesDaRua, ruasDosPacotes, statusEntregue } from './domain/ruas';
+import { dataLocal } from './domain/data';
+import { chaveTexto } from './domain/texto';
+import { gravarJSON, lerJSON, removerChave, useFalhasDeGravacao } from './utils/persistencia';
+import { recuperarFotosDaFilaAntiga } from './utils/migracaoFotos';
 
 // Função para normalizar e remover duplicatas na lista de ruas
 const normalizeStreetList = (list: string[]): string[] => {
@@ -28,15 +32,38 @@ const normalizeStreetList = (list: string[]): string[] => {
 
 const LOCAL_STORAGE_KEY = 'logiscan_deliveries_prod_v1';
 const STREETS_STORAGE_KEY = 'logiscan_today_streets_v5';
-const DAILY_CONFIRMED_DATE_KEY = 'safasanha_today_selection_date_v2';
+const DAILY_CONFIRMED_DATE_KEY = 'safasanha_today_selection_date_v3';
+/** Pacote fictício que a versão antiga gravava sozinha no primeiro uso. */
+const ID_PACOTE_DEMO = 'del_init_1';
 
 const DEFAULT_STREETS = CAJU_PRIMARY_AREAS;
 
-export default function App() {
+function carregarPacotes(): DeliveryData[] {
+  // Fotos que a versão antiga só guardava na fila do SafaSanhaso voltam para os pacotes (migração única).
+  recuperarFotosDaFilaAntiga(LOCAL_STORAGE_KEY);
+  const salvos = lerJSON<unknown>(LOCAL_STORAGE_KEY, []);
+  if (!Array.isArray(salvos)) return [];
+  return (salvos as DeliveryData[]).filter((d) => d && d.id_entrega !== ID_PACOTE_DEMO);
+}
+
+function AvisoArmazenamento() {
+  const falhas = useFalhasDeGravacao();
+  if (falhas.length === 0) return null;
+  return (
+    <div role="alert" className="sticky top-0 z-40 bg-rose-600 text-white text-xs font-bold px-3 py-2 flex items-start gap-2">
+      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+      <span>
+        Não foi possível salvar no aparelho (armazenamento cheio ou bloqueado). As últimas alterações podem se perder ao fechar o app.
+        Encerre o dia para arquivar as entregas ou libere espaço.
+      </span>
+    </div>
+  );
+}
+
+function Conteudo() {
   const [activeTab, setActiveTab] = useState<'ruas' | 'resumo' | 'associacao'>(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      const tabParam = params.get('tab');
+      const tabParam = new URLSearchParams(window.location.search).get('tab');
       if (tabParam === 'resumo' || tabParam === 'associacao' || tabParam === 'ruas') return tabParam;
     } catch (_e) {}
     return 'ruas';
@@ -44,8 +71,7 @@ export default function App() {
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      const themeParam = params.get('theme');
+      const themeParam = new URLSearchParams(window.location.search).get('theme');
       if (themeParam === 'dark' || themeParam === 'light') return themeParam;
       const saved = localStorage.getItem('safasanha_theme_v2');
       if (saved === 'dark' || saved === 'light') return saved;
@@ -57,30 +83,20 @@ export default function App() {
     try {
       localStorage.setItem('safasanha_theme_v2', theme);
     } catch (_e) {}
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
+  const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+
   const [activeStreet, setActiveStreet] = useState<string>('Rua Carlos Seidl');
   const [isRegionModalOpen, setIsRegionModalOpen] = useState<boolean>(false);
   const [isCloseDayModalOpen, setIsCloseDayModalOpen] = useState<boolean>(false);
 
-  // Modal Diário de Seleção 3x3 do Wireframe ("Qual as ruas de hoje?")
+  // Seletor diário de ruas ("Qual as ruas de hoje?") — abre sozinho na primeira vez de cada dia.
   const [isDailyStreetPickerOpen, setIsDailyStreetPickerOpen] = useState<boolean>(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('modal') === 'picker') return true;
-      if (params.get('tab') === 'resumo') return false;
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const confirmedDate = localStorage.getItem(DAILY_CONFIRMED_DATE_KEY);
-      // Se ainda não confirmou as ruas para o dia de hoje, abre automaticamente ao iniciar!
-      return confirmedDate !== todayStr;
+      if (new URLSearchParams(window.location.search).get('tab') === 'resumo') return false;
+      return localStorage.getItem(DAILY_CONFIRMED_DATE_KEY) !== dataLocal();
     } catch (_e) {
       return false;
     }
@@ -88,93 +104,34 @@ export default function App() {
 
   // Lista de ruas selecionadas para a rota de hoje
   const [savedStreets, setSavedStreets] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(STREETS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return normalizeStreetList(parsed);
-        }
-      }
-    } catch (_e) {}
+    const parsed = lerJSON<unknown>(STREETS_STORAGE_KEY, null);
+    if (Array.isArray(parsed) && parsed.length > 0) return normalizeStreetList(parsed as string[]);
     return normalizeStreetList(DEFAULT_STREETS);
   });
 
-  // Lista de entregas e pacotes para uso em produção (inicialmente limpo)
-  const [deliveries, setDeliveries] = useState<DeliveryData[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          // Sanitização de segurança: se a rua for Carlos Seidl ou outra rua normal, remove sub_rua_manilha residual
-          return parsed.map((d: DeliveryData) => {
-            const rua = (d.endereco_rua || '').toLowerCase().trim();
-            if (
-              rua.includes('carlos seidl') ||
-              rua.includes('general sampaio') ||
-              rua.includes('general gurjão') ||
-              rua.includes('praia do caju') ||
-              rua.includes('monsenhor') ||
-              rua.includes('tavares')
-            ) {
-              return {
-                ...d,
-                sub_rua_manilha: undefined,
-              };
-            }
-            return d;
-          });
-        }
-      }
-    } catch (_e) {}
-    return INITIAL_DELIVERIES;
-  });
+  // Entregas do dia (começam vazias; nenhum dado de demonstração é injetado)
+  const [deliveries, setDeliveries] = useState<DeliveryData[]>(carregarPacotes);
 
-  // Salva entregas no localStorage
   useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(deliveries));
-    } catch (_e) {}
+    gravarJSON(LOCAL_STORAGE_KEY, deliveries);
   }, [deliveries]);
 
-  // Salva ruas da região no localStorage
   useEffect(() => {
-    try {
-      localStorage.setItem(STREETS_STORAGE_KEY, JSON.stringify(savedStreets));
-    } catch (_e) {}
+    gravarJSON(STREETS_STORAGE_KEY, savedStreets);
   }, [savedStreets]);
 
-  // Sincroniza contagem de pacotes por rua com SafaSanhaso quando entregas mudam
-  useEffect(() => {
-    if (savedStreets.length === 0) return;
-    try {
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const streetsMap: Record<string, { total_packages: number }> = {};
-      savedStreets.forEach((street) => {
-        const count = deliveries.filter(d => (d.endereco_rua || '').toLowerCase() === street.toLowerCase()).length;
-        streetsMap[street] = { total_packages: count };
-      });
-      syncStreetsPlan(todayStr, streetsMap).catch(() => {});
-    } catch (_e) {}
-  }, [deliveries, savedStreets]);
-
-  // Sincroniza ruas dos pacotes carregados para a lista da região de forma segura e sem duplicar
+  // Ruas dos pacotes carregados entram na lista da região (sem duplicar e sem soltar sub-ruas da Manilha)
   useEffect(() => {
     setSavedStreets((prev) => {
       const map = new Map<string, string>();
       prev.forEach((st) => {
         const clean = st?.trim();
-        if (clean && !/^rua\s+[a-k]$/i.test(clean)) {
-          map.set(clean.toLowerCase(), clean);
-        }
+        if (clean && !/^rua\s+[a-k]$/i.test(clean)) map.set(chaveTexto(clean), clean);
       });
       let changed = false;
-      deliveries.forEach((d) => {
-        const st = d.endereco_rua || d.endereco_completo?.split(',')[0]?.trim();
-        // Não adiciona sub-ruas ou letras da Manilha como abas soltas no topo
-        if (st && !isManilhaDelivery(d) && !/^rua\s+[a-k]$/i.test(st) && !map.has(st.trim().toLowerCase())) {
-          map.set(st.trim().toLowerCase(), st.trim());
+      ruasDosPacotes(deliveries).forEach((st) => {
+        if (!/^rua\s+[a-k]$/i.test(st) && !map.has(chaveTexto(st))) {
+          map.set(chaveTexto(st), st);
           changed = true;
         }
       });
@@ -186,132 +143,86 @@ export default function App() {
   const handleAddStreet = (newStreet: string) => {
     const clean = newStreet.trim();
     if (!clean) return;
-    setSavedStreets((prev) => {
-      if (prev.some((s) => s.toLowerCase() === clean.toLowerCase())) {
-        return prev;
-      }
-      return [...prev, clean];
-    });
+    setSavedStreets((prev) => (prev.some((s) => chaveTexto(s) === chaveTexto(clean)) ? prev : [...prev, clean]));
     setActiveStreet(clean);
   };
 
   const handleDeleteStreet = (streetToDelete: string) => {
-    setSavedStreets((prev) => prev.filter((s) => s.toLowerCase() !== streetToDelete.toLowerCase()));
-    if (activeStreet.toLowerCase() === streetToDelete.toLowerCase()) {
-      setSavedStreets((prev) => {
-        const remaining = prev.filter((s) => s.toLowerCase() !== streetToDelete.toLowerCase());
-        if (remaining.length > 0) {
-          setActiveStreet(remaining[0]);
-        }
-        return remaining;
-      });
+    const remaining = savedStreets.filter((s) => chaveTexto(s) !== chaveTexto(streetToDelete));
+    setSavedStreets(remaining);
+    if (chaveTexto(activeStreet) === chaveTexto(streetToDelete) && remaining.length > 0) {
+      setActiveStreet(remaining[0]);
     }
   };
 
   const handleRenameStreet = (oldName: string, newName: string) => {
     const cleanNew = newName.trim();
     if (!cleanNew) return;
-    setSavedStreets((prev) =>
-      normalizeStreetList(prev.map((s) => (s.toLowerCase() === oldName.toLowerCase() ? cleanNew : s)))
-    );
-    if (activeStreet.toLowerCase() === oldName.toLowerCase()) {
-      setActiveStreet(cleanNew);
-    }
-    // Atualiza pacotes que tinham a rua antiga
+    setSavedStreets((prev) => normalizeStreetList(prev.map((s) => (chaveTexto(s) === chaveTexto(oldName) ? cleanNew : s))));
+    if (chaveTexto(activeStreet) === chaveTexto(oldName)) setActiveStreet(cleanNew);
+    // Atualiza pacotes que tinham a rua antiga (o vínculo de destino é refeito pela chave nova ao editar/cadastrar)
     setDeliveries((prev) =>
-      prev.map((d) => {
-        if (d.endereco_rua?.toLowerCase() === oldName.toLowerCase()) {
-          return {
-            ...d,
-            endereco_rua: cleanNew,
-            endereco_completo: `${cleanNew}, ${d.numero_casa || 'S/N'}`,
-          };
-        }
-        return d;
-      })
+      prev.map((d) =>
+        chaveTexto(d.endereco_rua) === chaveTexto(oldName)
+          ? {
+              ...d,
+              endereco_rua: cleanNew,
+              endereco_completo: `${cleanNew}, ${d.numero_casa || 'S/N'}${d.complemento ? ` (${d.complemento})` : ''}`,
+              destino_id: undefined,
+            }
+          : d
+      )
     );
   };
 
-  // Handlers de Entregas (100% em memória local com LocalStorage instantâneo)
-  const handleAddDelivery = (newDelivery: DeliveryData) => {
-    setDeliveries((prev) => [newDelivery, ...prev]);
-  };
+  // Handlers de Entregas
+  const handleAddDelivery = (newDelivery: DeliveryData) => setDeliveries((prev) => [newDelivery, ...prev]);
 
   const handleAddBatchDeliveries = (newDeliveries: DeliveryData[]) => {
     if (newDeliveries.length === 0) return;
     setDeliveries((prev) => [...newDeliveries, ...prev]);
   };
 
-  const handleUpdateDelivery = (updated: DeliveryData) => {
-    setDeliveries((prev) =>
-      prev.map((d) => (d.id_entrega === updated.id_entrega ? updated : d))
-    );
-  };
+  const handleUpdateDelivery = (updated: DeliveryData) =>
+    setDeliveries((prev) => prev.map((d) => (d.id_entrega === updated.id_entrega ? updated : d)));
 
-  const handleDeleteDelivery = (id: string) => {
-    setDeliveries((prev) => prev.filter((d) => d.id_entrega !== id));
-  };
+  const handleDeleteDelivery = (id: string) => setDeliveries((prev) => prev.filter((d) => d.id_entrega !== id));
 
   const handleClearAllDeliveries = () => {
     if (window.confirm('Deseja realmente limpar todos os pacotes e começar um novo dia de entregas?')) {
       setDeliveries([]);
-      try {
-        localStorage.removeItem(LOCAL_STORAGE_KEY);
-      } catch (_e) {}
+      removerChave(LOCAL_STORAGE_KEY);
     }
   };
 
-  // Pacotes da rua ativa
-  const streetDeliveries = useMemo(() => {
-    const cleanActive = activeStreet.trim().toLowerCase();
-    return deliveries.filter((d) => {
-      const st = (d.endereco_rua || d.endereco_completo || '').toLowerCase();
-      return st.includes(cleanActive) || cleanActive.includes(st);
-    });
-  }, [deliveries, activeStreet]);
+  // Contagem da rua ativa — a MESMA função usada por todas as telas
+  const streetDeliveries = useMemo(() => pacotesDaRua(deliveries, activeStreet), [deliveries, activeStreet]);
+  const { entregues: deliveredCount, insucessos: insucessoCount, pendentes: pendingCount } = useMemo(
+    () => contarPacotes(streetDeliveries),
+    [streetDeliveries]
+  );
 
-  const deliveredCount = streetDeliveries.filter(
-    (d) => d.status === 'entregue' || d.status === 'concluido'
-  ).length;
-  const insucessoCount = streetDeliveries.filter(
-    (d) => d.status === 'insucesso'
-  ).length;
-  const pendingCount = streetDeliveries.length - deliveredCount - insucessoCount;
+  // Moedas de Ouro do Dia: cada pacote entregue soma 2 moedas
+  const coinsToday = useMemo(() => deliveries.filter(statusEntregue).length * 2, [deliveries]);
 
-  // Moedas de Ouro do Dia: Cada pacote entregue soma 2 moedas de ouro
-  const totalDeliveredAll = useMemo(() => {
-    return deliveries.filter(
-      (d) => d.status === 'entregue' || d.status === 'concluido'
-    ).length;
-  }, [deliveries]);
-
-  const coinsToday = totalDeliveredAll * 2;
-
-  // Confirmação do Seletor 3x3 de Ruas Diárias
   const handleConfirmDailyStreets = (selected: string[]) => {
     if (selected.length > 0) {
       setSavedStreets(selected);
-      if (!selected.some((s) => s.toLowerCase() === activeStreet.toLowerCase())) {
-        setActiveStreet(selected[0]);
-      }
+      if (!selected.some((s) => chaveTexto(s) === chaveTexto(activeStreet))) setActiveStreet(selected[0]);
     }
     try {
-      const todayStr = new Date().toISOString().slice(0, 10);
-      localStorage.setItem(DAILY_CONFIRMED_DATE_KEY, todayStr);
-      // Sincroniza plano de ruas com SafaSanhaso
-      const streetsMap: Record<string, { total_packages: number; confirmed_packages?: number; is_last_in_group?: boolean }> = {};
-      selected.forEach((street) => {
-        streetsMap[street] = { total_packages: 0, confirmed_packages: 0 };
-      });
-      syncStreetsPlan(todayStr, streetsMap).catch(() => {});
+      localStorage.setItem(DAILY_CONFIRMED_DATE_KEY, dataLocal());
     } catch (_e) {}
   };
 
   return (
-    <div className={`min-h-screen font-sans flex flex-col antialiased transition-colors duration-200 selection:bg-emerald-500 selection:text-white ${
-    theme === 'dark' ? 'dark bg-[#090d16] text-slate-100' : 'bg-[#f4f6f9] text-slate-900'
-  }`}>
-      {/* Header Compacto Mobile */}
+    <div
+      className={`min-h-screen font-sans flex flex-col antialiased transition-colors duration-200 selection:bg-emerald-500 selection:text-white ${
+        theme === 'dark' ? 'dark bg-[#090d16] text-slate-100' : 'bg-[#f4f6f9] text-slate-900'
+      }`}
+    >
+      <AvisoArmazenamento />
+
       <Header
         activeStreet={activeStreet}
         theme={theme}
@@ -329,7 +240,6 @@ export default function App() {
         coinsToday={coinsToday}
       />
 
-      {/* Conteúdo Principal de acordo com a Aba Ativa */}
       <main className="flex-1 max-w-xl mx-auto w-full px-3 sm:px-4 py-2">
         {activeTab === 'ruas' && (
           <StreetPackageManager
@@ -367,17 +277,12 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'associacao' && (
-          <AssociationTab />
-        )}
+        {activeTab === 'associacao' && <AssociationTab />}
       </main>
 
-      {/* Recompensa Leve de Moedas Flutuante Não-Bloqueante */}
       <FloatingMoneyReward />
-      {/* Efeito Visual Rico de Moedas e Notas Voadoras */}
       <CashCelebrationBurst />
 
-      {/* Modal de Encerramento do Dia Global */}
       <CloseDayModal
         isOpen={isCloseDayModalOpen}
         deliveries={deliveries}
@@ -390,59 +295,22 @@ export default function App() {
         }}
       />
 
-      {/* Seletor Diário de Ruas (Grid 3x3 do Wireframe) */}
       <DailyStreetPickerModal
-        isOpen={
-          isDailyStreetPickerOpen &&
-          new URLSearchParams(window.location.search).get('picker') !== 'false' &&
-          !new URLSearchParams(window.location.search).get('modal')
-        }
+        isOpen={isDailyStreetPickerOpen}
         savedStreets={savedStreets}
         deliveries={deliveries}
         onClose={() => setIsDailyStreetPickerOpen(false)}
         onConfirmStreets={handleConfirmDailyStreets}
         onOpenAssociacaoTab={() => setActiveTab('associacao')}
       />
-
-      {/* Visualização para Modais de Entrega: Registro, Corrigir, Familiar e Vizinho */}
-      {Boolean(new URLSearchParams(window.location.search).get('modal')) && (
-        <DeliveryWhatsAppModal
-          isOpen={true}
-          delivery={{
-            id_entrega: 'preview_del_1',
-            codigo_pacote: '#BR987654321',
-            nome_destinatario: 'Maria Oliveira Santos',
-            endereco_rua: 'Rua Carlos Seidl',
-            numero_casa: '142',
-            complemento: 'Casa 2',
-            status:
-              new URLSearchParams(window.location.search).get('modal') === 'registro' ||
-              new URLSearchParams(window.location.search).get('modal') === 'corrigir'
-                ? 'entregue'
-                : 'aguardando_rua',
-            recebedor_tipo:
-              new URLSearchParams(window.location.search).get('modal') === 'familiar'
-                ? 'familiar'
-                : new URLSearchParams(window.location.search).get('modal') === 'vizinho'
-                ? 'vizinho'
-                : 'portaria',
-            recebedor_detalhes:
-              new URLSearchParams(window.location.search).get('modal') === 'familiar'
-                ? 'Familiar (Filho: Lucas)'
-                : new URLSearchParams(window.location.search).get('modal') === 'vizinho'
-                ? 'Vizinho Nº 144 (Dona Maria)'
-                : 'Portaria (José Carlos)',
-            data_hora: new Date().toISOString(),
-          }}
-          initialEditingReceipt={new URLSearchParams(window.location.search).get('modal') === 'corrigir'}
-          onClose={() => {
-            const url = new URL(window.location.href);
-            url.searchParams.delete('modal');
-            window.history.pushState({}, '', url);
-            window.location.reload();
-          }}
-        />
-      )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <MemoriaProvider>
+      <Conteudo />
+    </MemoriaProvider>
   );
 }
