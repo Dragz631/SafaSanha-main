@@ -3,7 +3,7 @@
  * Só exibe e chama os handlers — as regras vivem em src/domain/cargaHub.ts.
  */
 import React, { useRef } from 'react';
-import { Download, Upload, Warehouse } from 'lucide-react';
+import { Download, LogOut, Upload, Warehouse } from 'lucide-react';
 import type { DeliveryData } from '../types';
 import type { AjudanteHub, ItemSaida } from '../domain/cargaHub';
 import { ruaRealDoPacote, statusEntregue } from '../domain/ruas';
@@ -13,17 +13,32 @@ interface Props {
   ajudante: AjudanteHub | null;
   saida: ItemSaida[];
   aviso: { tipo: 'ok' | 'erro'; texto: string } | null;
+  /** Ajudantes com sessão encerrada e coisas guardadas neste aparelho. */
+  guardados: AjudanteHub[];
   onCarregarCarga: (arquivo: File) => void;
   onEnviarAoHub: () => void;
+  onEncerrarSessao: () => void;
+  onRetomarSessao: (ajudante: AjudanteHub) => void;
 }
 
-export const PainelHub: React.FC<Props> = ({ deliveries, ajudante, saida, aviso, onCarregarCarga, onEnviarAoHub }) => {
+export const PainelHub: React.FC<Props> = ({
+  deliveries,
+  ajudante,
+  saida,
+  aviso,
+  guardados,
+  onCarregarCarga,
+  onEnviarAoHub,
+  onEncerrarSessao,
+  onRetomarSessao,
+}) => {
   const input = useRef<HTMLInputElement>(null);
-  const daCarga = deliveries.filter((d) => d.hub && (!ajudante || d.hub.ajudante_id === ajudante.id));
+  const daCarga = ajudante ? deliveries.filter((d) => d.hub?.ajudante_id === ajudante.id) : [];
   const cargas = Array.from(new Set(daCarga.map((d) => d.hub!.carga_codigo)));
   const entregues = daCarga.filter(statusEntregue).length;
+  const insucessos = daCarga.filter((d) => d.status === 'insucesso').length;
   const porRua = new Map<string, number>();
-  daCarga.filter((d) => !statusEntregue(d)).forEach((d) => porRua.set(ruaRealDoPacote(d), (porRua.get(ruaRealDoPacote(d)) ?? 0) + 1));
+  daCarga.filter((d) => !statusEntregue(d) && d.status !== 'insucesso').forEach((d) => porRua.set(ruaRealDoPacote(d), (porRua.get(ruaRealDoPacote(d)) ?? 0) + 1));
   const aEnviar = saida.filter((e) => !e.exportado_em).length;
 
   return (
@@ -31,7 +46,13 @@ export const PainelHub: React.FC<Props> = ({ deliveries, ajudante, saida, aviso,
       <div className="flex flex-wrap items-center gap-2">
         <Warehouse className="w-4 h-4 text-sky-300 shrink-0" />
         <span className="font-black text-sky-200 uppercase tracking-tight">Carga do HUB</span>
-        {ajudante && <span className="text-slate-400">aparelho de <b className="text-slate-200">{ajudante.nome}</b></span>}
+        {ajudante ? (
+          <span className="text-slate-400">
+            sessão de <b className="text-slate-200">{ajudante.nome}</b>
+          </span>
+        ) : (
+          <span className="text-slate-500">nenhum ajudante em sessão</span>
+        )}
         <div className="ml-auto flex gap-1.5">
           <input
             ref={input}
@@ -60,12 +81,23 @@ export const PainelHub: React.FC<Props> = ({ deliveries, ajudante, saida, aviso,
           >
             <Download className="w-3.5 h-3.5" /> Enviar ao HUB{aEnviar > 0 ? ` (${aEnviar})` : ''}
           </button>
+          {ajudante && (
+            <button
+              type="button"
+              onClick={onEncerrarSessao}
+              title="Encerrar a sessão deste ajudante (nada é apagado)"
+              className="flex items-center gap-1 rounded-lg border border-slate-600 px-2 py-1.5 font-bold text-slate-300"
+            >
+              <LogOut className="w-3.5 h-3.5" /> Encerrar sessão
+            </button>
+          )}
         </div>
       </div>
 
       {daCarga.length > 0 && (
         <div className="mt-2 text-slate-300">
           <b>{cargas.join(', ')}</b> · {daCarga.length} pacote(s) · <span className="text-emerald-300">{entregues} entregue(s)</span>
+          {insucessos > 0 && <span className="text-rose-300"> · {insucessos} insucesso(s)</span>}
           {porRua.size > 0 && (
             <span className="text-slate-400">
               {' '}· faltam: {Array.from(porRua, ([rua, n]) => `${rua} (${n})`).join(', ')}
@@ -75,7 +107,22 @@ export const PainelHub: React.FC<Props> = ({ deliveries, ajudante, saida, aviso,
       )}
       {saida.length > 0 && (
         <div className="mt-1 text-slate-400">
-          {aEnviar > 0 ? `${aEnviar} entrega(s) ainda não enviada(s) ao HUB.` : 'Tudo já foi enviado ao HUB (reenviar é seguro).'}
+          {aEnviar > 0 ? `${aEnviar} acontecimento(s) ainda não enviado(s) ao HUB.` : 'Tudo já foi enviado ao HUB (reenviar é seguro).'}
+        </div>
+      )}
+      {!ajudante && guardados.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-slate-400">
+          Retomar sessão:
+          {guardados.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => onRetomarSessao(g)}
+              className="rounded-lg border border-sky-500/40 px-2 py-1 font-bold text-sky-200"
+            >
+              {g.nome}
+            </button>
+          ))}
         </div>
       )}
       {aviso && (

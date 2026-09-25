@@ -5,9 +5,11 @@
  *
  * - A carga traz SOMENTE os pacotes do ajudante dono dela.
  * - Carregar a mesma carga de novo não duplica nada (id do pacote no aparelho = id do HUB).
- * - Quando um pacote da carga é entregue, nasce um evento com id DETERMINÍSTICO:
+ * - Quando um pacote da carga é ENTREGUE ou tem INSUCESSO, nasce um evento com id DETERMINÍSTICO:
  *   o mesmo acontecimento, detectado ou enviado duas vezes, continua sendo um só.
- * - Sem provas/fotos nesta etapa: o evento leva só o fato, quando e quem recebeu.
+ * - Sem provas/fotos nesta etapa: o evento leva o fato, quando, quem recebeu ou o motivo do insucesso.
+ * - O aparelho NÃO é a pessoa: a identidade vem da SESSÃO do ajudante. Trocar de ajudante é explícito
+ *   (encerrar a sessão guarda cargas/pacotes/eventos dele à parte) — nunca se misturam dois ajudantes.
  *
  * O Street não conhece o HUB por dentro — só estes dois documentos.
  */
@@ -50,12 +52,14 @@ export interface DocumentoCarga {
 
 export interface EventoStreet {
   id_evento: string;
-  tipo: 'ENTREGA_REGISTRADA';
+  tipo: 'ENTREGA_REGISTRADA' | 'INSUCESSO_REGISTRADO';
   carga_id: string;
   hub_pacote_id: string;
   codigo: string;
   ocorrido_em: string;
   recebedor: { tipo: string; detalhes: string } | null;
+  /** Só INSUCESSO_REGISTRADO. */
+  motivo?: string;
 }
 
 export interface DocumentoEventos {
@@ -95,15 +99,64 @@ export function validarCarga(bruto: unknown): { ok: true; carga: DocumentoCarga 
   return erros.length ? { ok: false, erros } : { ok: true, carga: d as DocumentoCarga };
 }
 
-/** De quem é este aparelho × de quem é a carga. */
-export function donoDaCarga(aparelho: AjudanteHub | null, carga: DocumentoCarga): 'mesmo' | 'primeira_carga' | 'outro_ajudante' {
-  if (!aparelho) return 'primeira_carga';
-  return aparelho.id === carga.ajudante.id ? 'mesmo' : 'outro_ajudante';
+// ---------------------------------------------------------------------------
+// Sessão do ajudante (aparelho ≠ pessoa)
+// ---------------------------------------------------------------------------
+
+/** A carga só entra na sessão do PRÓPRIO ajudante; sem sessão, é preciso iniciá-la explicitamente. */
+export function podeCarregar(sessao: AjudanteHub | null, carga: DocumentoCarga): 'ok' | 'sem_sessao' | 'outro_ajudante' {
+  if (!sessao) return 'sem_sessao';
+  return sessao.id === carga.ajudante.id ? 'ok' : 'outro_ajudante';
 }
 
-/** Pacotes de carga do ajudante ainda não entregues neste aparelho (impede trocar de dono no meio da rota). */
-export function pendentesDoAjudante(noAparelho: DeliveryData[], ajudanteId: string): number {
-  return noAparelho.filter((d) => d.hub?.ajudante_id === ajudanteId && !statusEntregue(d)).length;
+/** Cargas/pacotes/eventos de um ajudante guardados enquanto a sessão dele está encerrada. */
+export type Guardados = Record<string, { ajudante: AjudanteHub; pacotes: DeliveryData[]; saida: ItemSaida[] }>;
+
+/**
+ * Encerra a sessão: os pacotes de carga e a fila de eventos do ajudante saem da tela e ficam guardados
+ * com ele (nada é apagado). Pacotes cadastrados à mão no Street não são afetados.
+ */
+export function encerrarSessao(
+  sessao: AjudanteHub,
+  deliveries: DeliveryData[],
+  saida: ItemSaida[],
+  guardados: Guardados,
+): { deliveries: DeliveryData[]; saida: ItemSaida[]; guardados: Guardados } {
+  const dele = deliveries.filter((d) => d.hub?.ajudante_id === sessao.id);
+  const anterior = guardados[sessao.id];
+  const idsDele = new Set(dele.map((d) => d.id_entrega));
+  return {
+    deliveries: deliveries.filter((d) => d.hub?.ajudante_id !== sessao.id),
+    saida: [],
+    guardados: {
+      ...guardados,
+      [sessao.id]: {
+        ajudante: sessao,
+        pacotes: [...dele, ...(anterior?.pacotes ?? []).filter((d) => !idsDele.has(d.id_entrega))],
+        saida: [...(anterior?.saida ?? []).filter((e) => !saida.some((x) => x.id_evento === e.id_evento)), ...saida],
+      },
+    },
+  };
+}
+
+/** Inicia (ou retoma) a sessão de um ajudante; o que estava guardado com ele volta. */
+export function iniciarSessao(
+  ajudante: AjudanteHub,
+  deliveries: DeliveryData[],
+  guardados: Guardados,
+): { deliveries: DeliveryData[]; saida: ItemSaida[]; guardados: Guardados } {
+  const outros = deliveries.filter((d) => d.hub && d.hub.ajudante_id !== ajudante.id);
+  if (outros.length > 0) {
+    throw new Error(`há ${outros.length} pacote(s) de carga de outro ajudante na tela: encerre a sessão dele antes`);
+  }
+  const g = guardados[ajudante.id];
+  const { [ajudante.id]: _retomado, ...resto } = guardados;
+  const naTela = new Set(deliveries.map((d) => d.id_entrega));
+  return {
+    deliveries: [...(g?.pacotes ?? []).filter((d) => !naTela.has(d.id_entrega)), ...deliveries],
+    saida: g?.saida ?? [],
+    guardados: resto,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -180,26 +233,41 @@ export function receberCarga(
 // ---------------------------------------------------------------------------
 
 /**
- * Compara o antes/depois da lista do aparelho e devolve as ENTREGAS novas de pacotes da carga.
- * Pega qualquer caminho de baixa do app (modal, lote, atalho) sem precisar mexer em cada tela.
+ * Compara o antes/depois da lista do aparelho e devolve os DESFECHOS novos de pacotes da carga:
+ * entrega ou insucesso. Pega qualquer caminho de baixa do app (modal, lote, atalho) sem mexer em cada tela.
+ * Só considera pacotes do ajudante da sessão (quando informado).
  */
-export function detectarEntregas(antes: DeliveryData[], depois: DeliveryData[]): EventoStreet[] {
+export function detectarEventos(antes: DeliveryData[], depois: DeliveryData[], sessaoId?: string): EventoStreet[] {
   const anterior = new Map(antes.map((d) => [d.id_entrega, d]));
   const eventos: EventoStreet[] = [];
   for (const d of depois) {
-    if (!d.hub || !statusEntregue(d)) continue;
+    if (!d.hub || (sessaoId && d.hub.ajudante_id !== sessaoId)) continue;
     const a = anterior.get(d.id_entrega);
-    if (!a || statusEntregue(a)) continue; // já estava entregue (ou acabou de chegar assim): nada novo
-    const quando = d.data_hora_entrega || d.data_hora;
-    eventos.push({
-      id_evento: `${d.hub.pacote_id}:entrega:${quando}`,
-      tipo: 'ENTREGA_REGISTRADA',
+    if (!a) continue; // acabou de chegar (carga ou sessão retomada): nada aconteceu agora
+    const base = {
       carga_id: d.hub.carga_id,
       hub_pacote_id: d.hub.pacote_id,
       codigo: d.codigo_pacote.replace(/^#/, ''),
-      ocorrido_em: quando,
-      recebedor: d.recebedor_tipo || d.recebedor_detalhes ? { tipo: d.recebedor_tipo || '', detalhes: d.recebedor_detalhes || '' } : null,
-    });
+    };
+    if (statusEntregue(d) && !statusEntregue(a)) {
+      const quando = d.data_hora_entrega || d.data_hora;
+      eventos.push({
+        ...base,
+        id_evento: `${d.hub.pacote_id}:entrega:${quando}`,
+        tipo: 'ENTREGA_REGISTRADA',
+        ocorrido_em: quando,
+        recebedor: d.recebedor_tipo || d.recebedor_detalhes ? { tipo: d.recebedor_tipo || '', detalhes: d.recebedor_detalhes || '' } : null,
+      });
+    } else if (d.status === 'insucesso' && a.status !== 'insucesso') {
+      eventos.push({
+        ...base,
+        id_evento: `${d.hub.pacote_id}:insucesso:${d.data_hora}`,
+        tipo: 'INSUCESSO_REGISTRADO',
+        ocorrido_em: d.data_hora,
+        recebedor: null,
+        motivo: d.motivo_insucesso || 'sem motivo informado',
+      });
+    }
   }
   return eventos;
 }

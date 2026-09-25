@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   type DocumentoCarga,
   acumularSaida,
-  detectarEntregas,
-  donoDaCarga,
+  detectarEventos,
+  encerrarSessao,
+  iniciarSessao,
   marcarExportados,
   montarDocumentoEventos,
+  podeCarregar,
   receberCarga,
   validarCarga,
 } from './cargaHub';
@@ -13,29 +15,32 @@ import { aplicarEntrega, aplicarInsucesso } from './entrega';
 import { memoriaVazia } from './memoria';
 
 const AGORA = '2026-09-24T12:00:00.000Z';
+const HUGO = { id: 'aj-hugo', nome: 'Hugo' };
+const ANA = { id: 'aj-ana', nome: 'Ana' };
+
+const pac = (id: string, codigo: string, rua: string, numero: string, complemento = '', destino_id: string | null = null) => ({
+  hub_pacote_id: id,
+  transportadora: 'jtexpress',
+  codigo,
+  destinatario: 'João',
+  rua,
+  rua_detalhe: '',
+  numero,
+  complemento,
+  bairro: 'CAJU',
+  cidade: 'Rio de Janeiro',
+  uf: 'RJ',
+  cep: '20931002',
+  destino_id,
+});
 
 /** Formato exato do que o HUB exporta (logiscan.carga/v0). */
 function carga(over: Partial<DocumentoCarga> = {}): DocumentoCarga {
-  const pac = (id: string, codigo: string, rua: string, numero: string, complemento = '', destino_id: string | null = null) => ({
-    hub_pacote_id: id,
-    transportadora: 'jtexpress',
-    codigo,
-    destinatario: 'João',
-    rua,
-    rua_detalhe: '',
-    numero,
-    complemento,
-    bairro: 'CAJU',
-    cidade: 'Rio de Janeiro',
-    uf: 'RJ',
-    cep: '20931002',
-    destino_id,
-  });
   return {
     schema: 'logiscan.carga/v0',
     gerado_em: AGORA,
     carga: { id: 'carga-1', codigo: 'C-20260924-HUGO-1', criada_em: AGORA, criada_por: 'Galpão' },
-    ajudante: { id: 'aj-hugo', nome: 'Hugo' },
+    ajudante: HUGO,
     pacotes: [
       pac('p1', '888000000000001', 'Rua Carlos Seidl', '133', '', 'rua carlos seidl|133|'),
       pac('p2', '888000000000002', 'Rua Leão XIII', '24', 'Loja ABC', 'rua leao xiii|24|comercio:loja abc'),
@@ -44,6 +49,13 @@ function carga(over: Partial<DocumentoCarga> = {}): DocumentoCarga {
     ...over,
   };
 }
+
+const cargaDaAna = () =>
+  carga({
+    carga: { id: 'carga-ana', codigo: 'C-20260924-ANA-1', criada_em: AGORA, criada_por: 'Galpão' },
+    ajudante: ANA,
+    pacotes: [pac('a1', '999000000000001', 'Rua General Gurjão', '10')],
+  });
 
 describe('validarCarga', () => {
   it('aceita a carga do HUB', () => {
@@ -61,14 +73,6 @@ describe('validarCarga', () => {
     const r = validarCarga(c);
     expect(r.ok).toBe(false);
     if ('erros' in r) expect(r.erros[0]).toMatch(/pacote 2/);
-  });
-});
-
-describe('donoDaCarga', () => {
-  it('identifica primeira carga, mesmo ajudante e outro ajudante', () => {
-    expect(donoDaCarga(null, carga())).toBe('primeira_carga');
-    expect(donoDaCarga({ id: 'aj-hugo', nome: 'Hugo' }, carga())).toBe('mesmo');
-    expect(donoDaCarga({ id: 'aj-ana', nome: 'Ana' }, carga())).toBe('outro_ajudante');
   });
 });
 
@@ -105,14 +109,14 @@ describe('receberCarga', () => {
   });
 });
 
-describe('detectarEntregas → fila → documento para o HUB', () => {
+describe('detectarEventos → fila → documento para o HUB', () => {
   const entregar = (d: ReturnType<typeof receberCarga>['novos'][number], quando: string) =>
     aplicarEntrega(d, { recebedor_tipo: 'vizinho', recebedor_detalhes: 'Maria' }, quando);
 
   it('entrega de um pacote da carga gera UM evento simples com id determinístico', () => {
     const { novos } = receberCarga(memoriaVazia(), carga(), [], AGORA);
     const depois = novos.map((d) => (d.id_entrega === 'hub_p1' ? entregar(d, '2026-09-24T14:37:00.000Z') : d));
-    expect(detectarEntregas(novos, depois)).toEqual([
+    expect(detectarEventos(novos, depois)).toEqual([
       {
         id_evento: 'p1:entrega:2026-09-24T14:37:00.000Z',
         tipo: 'ENTREGA_REGISTRADA',
@@ -123,28 +127,89 @@ describe('detectarEntregas → fila → documento para o HUB', () => {
         recebedor: { tipo: 'vizinho', detalhes: 'Maria' },
       },
     ]);
-    // nada mudou desde então → nenhum evento novo
-    expect(detectarEntregas(depois, depois)).toEqual([]);
+    expect(detectarEventos(depois, depois)).toEqual([]);
   });
 
-  it('insucesso e pacotes sem vínculo com o HUB não geram evento nesta etapa', () => {
+  it('insucesso gera evento com motivo e horário', () => {
+    const { novos } = receberCarga(memoriaVazia(), carga(), [], AGORA);
+    const depois = novos.map((d) => (d.id_entrega === 'hub_p2' ? aplicarInsucesso(d, 'Morador ausente', '2026-09-24T15:02:00.000Z') : d));
+    expect(detectarEventos(novos, depois)).toEqual([
+      {
+        id_evento: 'p2:insucesso:2026-09-24T15:02:00.000Z',
+        tipo: 'INSUCESSO_REGISTRADO',
+        carga_id: 'carga-1',
+        hub_pacote_id: 'p2',
+        codigo: '888000000000002',
+        ocorrido_em: '2026-09-24T15:02:00.000Z',
+        recebedor: null,
+        motivo: 'Morador ausente',
+      },
+    ]);
+  });
+
+  it('pacote sem vínculo com o HUB não gera evento', () => {
     const { novos } = receberCarga(memoriaVazia(), carga(), [], AGORA);
     const semHub = { ...novos[0], id_entrega: 'manual_1', hub: undefined };
-    const antes = [...novos, semHub];
-    const depois = [aplicarInsucesso(novos[0], 'ausente', AGORA), ...novos.slice(1), entregar(semHub, AGORA)];
-    expect(detectarEntregas(antes, depois)).toEqual([]);
+    expect(detectarEventos([semHub], [entregar(semHub, AGORA)])).toEqual([]);
   });
 
-  it('a fila não duplica o mesmo evento e o documento segue o contrato', () => {
+  it('a fila não duplica o mesmo evento (retry) e o documento segue o contrato', () => {
     const { novos } = receberCarga(memoriaVazia(), carga(), [], AGORA);
     const depois = novos.map((d) => (d.id_entrega === 'hub_p2' ? entregar(d, '2026-09-24T15:00:00.000Z') : d));
-    const ev = detectarEntregas(novos, depois);
+    const ev = detectarEventos(novos, depois);
     let saida = acumularSaida([], ev);
-    saida = acumularSaida(saida, ev); // detectado de novo (ex.: re-render) → continua 1
+    saida = acumularSaida(saida, ev);
     expect(saida).toHaveLength(1);
-    const doc = montarDocumentoEventos(saida, { id: 'aj-hugo', nome: 'Hugo' }, AGORA);
+    const doc = montarDocumentoEventos(saida, HUGO, AGORA);
     expect(doc).toMatchObject({ schema: 'logiscan.street-eventos/v0', ajudante: { id: 'aj-hugo' } });
     expect(doc.eventos[0]).not.toHaveProperty('exportado_em');
     expect(marcarExportados(saida, AGORA)[0].exportado_em).toBe(AGORA);
+  });
+});
+
+describe('sessão do ajudante (aparelho ≠ pessoa)', () => {
+  it('carga só entra na sessão do próprio ajudante; sem sessão, pede para iniciar', () => {
+    expect(podeCarregar(null, carga())).toBe('sem_sessao');
+    expect(podeCarregar(HUGO, carga())).toBe('ok');
+    expect(podeCarregar(ANA, carga())).toBe('outro_ajudante');
+  });
+
+  it('troca explícita de ajudante não mistura cargas, pacotes nem eventos — e nada é apagado', () => {
+    const manual = { ...receberCarga(memoriaVazia(), carga(), [], AGORA).novos[0], id_entrega: 'manual_1', hub: undefined };
+
+    // Sessão do Hugo: carga dele + uma entrega na fila
+    let tela = iniciarSessao(HUGO, [manual], {});
+    const doHugo = receberCarga(memoriaVazia(), carga(), tela.deliveries, AGORA).novos;
+    const antes = [...doHugo, ...tela.deliveries];
+    const depois = antes.map((d) => (d.id_entrega === 'hub_p1' ? aplicarEntrega(d, { recebedor_tipo: 'vizinho', recebedor_detalhes: 'Maria' }, AGORA) : d));
+    const saidaHugo = acumularSaida([], detectarEventos(antes, depois, HUGO.id));
+    expect(saidaHugo).toHaveLength(1);
+
+    // Encerra: pacotes e fila do Hugo saem da tela e ficam guardados; o manual fica
+    const fim = encerrarSessao(HUGO, depois, saidaHugo, {});
+    expect(fim.deliveries.map((d) => d.id_entrega)).toEqual(['manual_1']);
+    expect(fim.saida).toEqual([]);
+    expect(fim.guardados[HUGO.id].pacotes).toHaveLength(3);
+    expect(fim.guardados[HUGO.id].saida).toHaveLength(1);
+
+    // Sessão da Ana: só a carga dela aparece, a fila começa vazia
+    tela = iniciarSessao(ANA, fim.deliveries, fim.guardados);
+    const daAna = receberCarga(memoriaVazia(), cargaDaAna(), tela.deliveries, AGORA).novos;
+    const telaAna = [...daAna, ...tela.deliveries];
+    expect(telaAna.filter((d) => d.hub).map((d) => d.hub!.ajudante_id)).toEqual([ANA.id]);
+    expect(tela.saida).toEqual([]);
+    // entrega de pacote do Hugo nunca entra na fila da Ana
+    expect(detectarEventos(depois, depois.map((d) => ({ ...d, status: 'entregue' as const })), ANA.id)).toEqual([]);
+    // abrir outra sessão com pacotes da Ana na tela é bloqueado
+    expect(() => iniciarSessao(HUGO, telaAna, tela.guardados)).toThrow(/outro ajudante/);
+
+    // Ana encerra; Hugo retoma e recebe de volta os pacotes e a fila dele
+    const fimAna = encerrarSessao(ANA, telaAna, [], tela.guardados);
+    const volta = iniciarSessao(HUGO, fimAna.deliveries, fimAna.guardados);
+    expect(volta.deliveries.filter((d) => d.hub).map((d) => d.hub!.ajudante_id)).toEqual([HUGO.id, HUGO.id, HUGO.id]);
+    expect(volta.saida.map((e) => e.id_evento)).toEqual(saidaHugo.map((e) => e.id_evento));
+    expect(volta.guardados).toHaveProperty(ANA.id);
+    expect(volta.guardados).not.toHaveProperty(HUGO.id);
+    expect(montarDocumentoEventos(volta.saida, HUGO, AGORA).eventos.every((e) => e.carga_id === 'carga-1')).toBe(true);
   });
 });
