@@ -14,9 +14,11 @@ import { MemoriaProvider, useMemoria } from './state/MemoriaContext';
 import { PainelHub } from './components/PainelHub';
 import {
   type AjudanteHub,
+  type DocumentoCarga,
   type Guardados,
   type ItemSaida,
   acumularSaida,
+  cargaDoPerfil,
   detectarEventos,
   encerrarSessao,
   iniciarSessao,
@@ -24,16 +26,21 @@ import {
   montarDocumentoEventos,
   podeCarregar,
   receberCarga,
+  retiradosDaCarga,
   validarCarga,
 } from './domain/cargaHub';
+import { memoriaVazia } from './domain/memoria';
 import {
   gravarAjudanteDoAparelho,
   gravarGuardados,
+  gravarMemoriaSemPerfil,
   gravarSaida,
   lerAjudanteDoAparelho,
   lerGuardados,
+  lerMemoriaSemPerfil,
   lerSaida,
 } from './utils/hubStorage';
+import { ErroTransporte, gravarUrlHub, lerUrlHub, transporteHttp } from './utils/transporteHub';
 import { contarPacotes, pacotesDaRua, ruasDosPacotes, statusEntregue } from './domain/ruas';
 import { dataLocal } from './domain/data';
 import { chaveTexto } from './domain/texto';
@@ -125,12 +132,17 @@ function Conteudo() {
   }, [savedStreets]);
 
   // ---- Ponte com o LogiScan HUB (carga → Street → eventos) ----------------------
-  // A identidade vem da SESSÃO do ajudante, não do aparelho. Trocar de ajudante é sempre explícito.
+  // A identidade vem do PERFIL escolhido (sessão), não do aparelho. Trocar de perfil é sempre explícito.
+  // Memórias separadas: a memória pessoal (endereços) é do perfil; regiões e histórico oficial são do HUB.
   const { memoria, atualizar } = useMemoria();
   const [ajudanteHub, setAjudanteHub] = useState<AjudanteHub | null>(lerAjudanteDoAparelho);
   const [saidaHub, setSaidaHub] = useState<ItemSaida[]>(lerSaida);
   const [guardadosHub, setGuardadosHub] = useState<Guardados>(lerGuardados);
   const [avisoHub, setAvisoHub] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+  const [urlHub, setUrlHub] = useState<string>(lerUrlHub);
+  const [perfisHub, setPerfisHub] = useState<AjudanteHub[] | null>(null);
+  const [cargaOferecida, setCargaOferecida] = useState<{ doc: DocumentoCarga; novos: number; retirados: number } | null>(null);
+  const transporte = useMemo(() => transporteHttp(urlHub), [urlHub]);
   useEffect(() => {
     gravarAjudanteDoAparelho(ajudanteHub);
   }, [ajudanteHub]);
@@ -149,21 +161,113 @@ function Conteudo() {
     if (novos.length > 0) setSaidaHub((s) => acumularSaida(s, novos));
   }, [deliveries, ajudanteHub]);
 
-  /** Inicia/retoma a sessão de um ajudante (o que estava guardado com ele volta para a tela). */
-  const abrirSessao = (ajudante: AjudanteHub, lista: DeliveryData[]): DeliveryData[] | null => {
+  const trocarLista = (lista: DeliveryData[]) => {
+    deliveriesAnteriores.current = lista; // chegar/sair da tela não é acontecimento
+    setDeliveries(lista);
+  };
+
+  const carregarPerfis = async () => {
     try {
-      const r = iniciarSessao(ajudante, lista, guardadosHub);
-      setGuardadosHub(r.guardados);
-      setSaidaHub(r.saida);
-      setAjudanteHub(ajudante);
-      return r.deliveries;
+      setPerfisHub(await transporte.perfis());
+    } catch (e) {
+      setPerfisHub(null);
+      setAvisoHub({ tipo: 'erro', texto: `${(e as Error).message}. Dá para usar o arquivo da carga.` });
+    }
+  };
+  useEffect(() => {
+    if (!ajudanteHub) carregarPerfis();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transporte]);
+
+  /** Abre a sessão do perfil: volta o que estava guardado com ele e troca para a MEMÓRIA PESSOAL dele. */
+  const abrirSessao = (ajudante: AjudanteHub, lista: DeliveryData[]): { lista: DeliveryData[]; memoria: typeof memoria } | null => {
+    let r: ReturnType<typeof iniciarSessao>;
+    try {
+      r = iniciarSessao(ajudante, lista, guardadosHub);
     } catch (e) {
       setAvisoHub({ tipo: 'erro', texto: (e as Error).message });
       return null;
     }
+    gravarMemoriaSemPerfil(memoria); // a memória em uso até aqui é a do aparelho sem perfil
+    let memoriaDoPerfil = r.memoria;
+    if (!memoriaDoPerfil) {
+      const temMemoria = Object.keys(memoria.destinos).length > 0;
+      memoriaDoPerfil =
+        temMemoria &&
+        window.confirm(`Primeira vez de ${ajudante.nome} neste aparelho. Copiar a memória de endereços do aparelho para o perfil dele? (Se não, ele começa com memória vazia.)`)
+          ? memoria
+          : memoriaVazia();
+    }
+    const m = memoriaDoPerfil;
+    atualizar(() => m);
+    setGuardadosHub(r.guardados);
+    setSaidaHub(r.saida);
+    setAjudanteHub(ajudante);
+    setCargaOferecida(null);
+    return { lista: r.deliveries, memoria: m };
   };
 
-  const handleCarregarCarga = async (arquivo: File) => {
+  /** Aplica uma carga (vinda do HUB ou de arquivo) ao perfil ativo. */
+  const aplicarCarga = (carga: DocumentoCarga, lista: DeliveryData[], origem: 'hub' | 'arquivo', base = memoria) => {
+    const agora = new Date().toISOString();
+    const r = receberCarga(base, carga, lista, agora);
+    const ret = retiradosDaCarga(carga, lista);
+    atualizar(() => r.memoria);
+    trocarLista([...r.novos, ...lista.filter((d) => !ret.remover.includes(d.id_entrega))]);
+    setCargaOferecida(null);
+    const partes = [`${r.novos.length} pacote(s) novo(s)`];
+    if (r.jaNoAparelho) partes.push(`${r.jaNoAparelho} já estavam no aparelho`);
+    if (ret.remover.length) partes.push(`${ret.remover.length} retirado(s) da carga pelo HUB`);
+    if (r.destinoPendente) partes.push(`${r.destinoPendente} com destino a confirmar`);
+    const aguardando = carga.carga.situacao === 'MONTADA' ? ' Rota ainda não iniciada no HUB.' : '';
+    setAvisoHub({ tipo: 'ok', texto: `Carga ${carga.carga.codigo} (${origem === 'hub' ? 'direto do HUB' : 'arquivo'}): ${partes.join(', ')}.${aguardando}` });
+    if (origem === 'hub') {
+      transporte.confirmarRecebimento(carga.carga.id, carga.ajudante.id, carga.pacotes.length).catch(() => undefined);
+    }
+  };
+
+  const handleEscolherPerfil = (ajudante: AjudanteHub) => {
+    if (ajudanteHub) return;
+    const aberta = abrirSessao(ajudante, deliveries);
+    if (!aberta) return;
+    trocarLista(aberta.lista);
+    setAvisoHub({ tipo: 'ok', texto: `Perfil de ${ajudante.nome} ativo neste aparelho.` });
+    buscarCargaHub(ajudante, aberta.lista);
+  };
+
+  const buscarCargaHub = async (perfil = ajudanteHub, lista = deliveries) => {
+    if (!perfil) return;
+    try {
+      const [doc] = await transporte.cargasDoPerfil(perfil.id);
+      if (!doc) {
+        setCargaOferecida(null);
+        setAvisoHub({ tipo: 'ok', texto: `Nenhuma carga ativa para ${perfil.nome} no HUB.` });
+        return;
+      }
+      const v = validarCarga(doc);
+      if ('erros' in v) {
+        setAvisoHub({ tipo: 'erro', texto: `Carga do HUB recusada: ${v.erros.slice(0, 3).join('; ')}` });
+        return;
+      }
+      if (!cargaDoPerfil(perfil, v.carga)) {
+        setAvisoHub({ tipo: 'erro', texto: `O HUB devolveu a carga de ${v.carga.ajudante.nome} para o perfil de ${perfil.nome}: recusada.` });
+        return;
+      }
+      const naTela = new Set(lista.map((d) => d.hub?.pacote_id).filter(Boolean));
+      const novos = v.carga.pacotes.filter((p) => !naTela.has(p.hub_pacote_id)).length;
+      const retirados = retiradosDaCarga(v.carga, lista).remover.length;
+      if (novos === 0 && retirados === 0) {
+        setCargaOferecida(null);
+        setAvisoHub({ tipo: 'ok', texto: `Carga ${v.carga.carga.codigo} já está atualizada neste aparelho.` });
+        return;
+      }
+      setCargaOferecida({ doc: v.carga, novos, retirados });
+    } catch (e) {
+      setAvisoHub({ tipo: 'erro', texto: e instanceof ErroTransporte ? `${e.message}. Use o arquivo da carga.` : (e as Error).message });
+    }
+  };
+
+  const handleCarregarArquivo = async (arquivo: File) => {
     let bruto: unknown;
     try {
       bruto = JSON.parse(await arquivo.text());
@@ -181,69 +285,75 @@ function Conteudo() {
     if (permissao === 'outro_ajudante') {
       setAvisoHub({
         tipo: 'erro',
-        texto: `Esta carga é de ${carga.ajudante.nome}, mas a sessão aberta é de ${ajudanteHub!.nome}. Encerre a sessão de ${ajudanteHub!.nome} antes.`,
+        texto: `Esta carga é de ${carga.ajudante.nome}, mas o perfil ativo é ${ajudanteHub!.nome}. Troque de perfil antes.`,
       });
       return;
     }
-    let lista = deliveries;
     if (permissao === 'sem_sessao') {
-      if (!window.confirm(`Iniciar a sessão de ${carga.ajudante.nome} neste aparelho para receber a carga ${carga.carga.codigo}?`)) return;
+      if (!window.confirm(`Ativar o perfil de ${carga.ajudante.nome} neste aparelho para receber a carga ${carga.carga.codigo}?`)) return;
       const aberta = abrirSessao(carga.ajudante, deliveries);
       if (!aberta) return;
-      lista = aberta;
+      aplicarCarga(carga, aberta.lista, 'arquivo', aberta.memoria);
+      return;
     }
-    const agora = new Date().toISOString();
-    const r = receberCarga(memoria, carga, lista, agora);
-    atualizar(() => r.memoria);
-    // a lista "anterior" do observador acompanha a troca: chegar na tela não é acontecimento
-    deliveriesAnteriores.current = [...r.novos, ...lista];
-    setDeliveries([...r.novos, ...lista]);
-    setAvisoHub({
-      tipo: 'ok',
-      texto:
-        `Carga ${carga.carga.codigo}: ${r.novos.length} pacote(s) carregado(s)` +
-        (r.jaNoAparelho ? `, ${r.jaNoAparelho} já estavam no aparelho` : '') +
-        (r.destinoPendente ? `, ${r.destinoPendente} com destino a confirmar` : '') +
-        '.',
-    });
-  };
-
-  const handleRetomarSessao = (ajudante: AjudanteHub) => {
-    if (ajudanteHub) return;
-    const lista = abrirSessao(ajudante, deliveries);
-    if (!lista) return;
-    deliveriesAnteriores.current = lista;
-    setDeliveries(lista);
-    setAvisoHub({ tipo: 'ok', texto: `Sessão de ${ajudante.nome} retomada.` });
+    aplicarCarga(carga, deliveries, 'arquivo');
   };
 
   const handleEncerrarSessao = () => {
     if (!ajudanteHub) return;
     const pendentes = saidaHub.filter((e) => !e.exportado_em).length;
     const aviso = pendentes
-      ? `\n\n${pendentes} acontecimento(s) ainda não foram enviados ao HUB. Eles ficam guardados com ${ajudanteHub.nome} e voltam quando a sessão dele for retomada.`
+      ? `\n\n${pendentes} acontecimento(s) ainda não foram enviados ao HUB. Eles ficam guardados com ${ajudanteHub.nome} e voltam quando o perfil dele for ativado de novo.`
       : '';
-    if (!window.confirm(`Encerrar a sessão de ${ajudanteHub.nome}? Os pacotes da carga de ${ajudanteHub.nome} saem da tela e ficam guardados à parte.${aviso}`)) return;
-    const r = encerrarSessao(ajudanteHub, deliveries, saidaHub, guardadosHub);
-    deliveriesAnteriores.current = r.deliveries;
-    setDeliveries(r.deliveries);
+    if (!window.confirm(`Trocar de perfil? A carga, a fila e a memória de ${ajudanteHub.nome} ficam guardadas à parte.${aviso}`)) return;
+    const r = encerrarSessao(ajudanteHub, deliveries, saidaHub, guardadosHub, memoria);
+    trocarLista(r.deliveries);
     setSaidaHub(r.saida);
     setGuardadosHub(r.guardados);
-    setAvisoHub({ tipo: 'ok', texto: `Sessão de ${ajudanteHub.nome} encerrada. Nada foi apagado.` });
+    const semPerfil = lerMemoriaSemPerfil() ?? memoriaVazia();
+    atualizar(() => semPerfil);
+    setCargaOferecida(null);
+    setAvisoHub({ tipo: 'ok', texto: `Perfil de ${ajudanteHub.nome} encerrado neste aparelho. Nada foi apagado.` });
     setAjudanteHub(null);
+    carregarPerfis();
   };
 
-  const handleEnviarAoHub = () => {
-    if (!ajudanteHub || saidaHub.length === 0) return;
-    const agora = new Date().toISOString();
-    const doc = montarDocumentoEventos(saidaHub, ajudanteHub, agora);
-    const nome = `retorno-street-${ajudanteHub.nome.replace(/[^\w-]+/g, '_')}-${agora.slice(0, 16).replace(/[:T]/g, '-')}.json`;
+  const baixarArquivoEventos = (doc: ReturnType<typeof montarDocumentoEventos>, agora: string) => {
+    const nome = `retorno-street-${doc.ajudante.nome.replace(/[^\w-]+/g, '_')}-${agora.slice(0, 16).replace(/[:T]/g, '-')}.json`;
     const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: nome });
     a.click();
     URL.revokeObjectURL(url);
+    return nome;
+  };
+
+  const handleEnviarAoHub = async (modo: 'hub' | 'arquivo' = 'hub') => {
+    if (!ajudanteHub || saidaHub.length === 0) return;
+    const agora = new Date().toISOString();
+    const doc = montarDocumentoEventos(saidaHub, ajudanteHub, agora);
+    if (modo === 'hub') {
+      try {
+        const r = await transporte.enviarEventos(doc);
+        setSaidaHub((s) => marcarExportados(s, agora));
+        setAvisoHub({
+          tipo: r.recusados.length ? 'erro' : 'ok',
+          texto:
+            `HUB: ${r.aceitos} registrado(s), ${r.repetidos} já recebido(s)` +
+            (r.recusados.length ? `, ${r.recusados.length} recusado(s): ${r.recusados.map((x) => `${x.codigo} — ${x.motivo}`).join('; ')}` : '.'),
+        });
+        return;
+      } catch (e) {
+        setAvisoHub({ tipo: 'erro', texto: `${(e as Error).message}. Gerando arquivo para levar ao HUB.` });
+      }
+    }
+    const nome = baixarArquivoEventos(doc, agora);
     setSaidaHub((s) => marcarExportados(s, agora));
     setAvisoHub({ tipo: 'ok', texto: `${nome} gerado com ${doc.eventos.length} acontecimento(s). Leve este arquivo ao HUB.` });
+  };
+
+  const handleUrlHub = (url: string) => {
+    gravarUrlHub(url);
+    setUrlHub(lerUrlHub());
   };
 
   // Ruas dos pacotes carregados entram na lista da região (sem duplicar e sem soltar sub-ruas da Manilha)
@@ -366,11 +476,18 @@ function Conteudo() {
           ajudante={ajudanteHub}
           saida={saidaHub}
           aviso={avisoHub}
+          perfis={perfisHub}
           guardados={Object.values(guardadosHub).map((g) => g.ajudante)}
-          onCarregarCarga={handleCarregarCarga}
+          urlHub={urlHub}
+          cargaOferecida={cargaOferecida}
+          onEscolherPerfil={handleEscolherPerfil}
+          onBuscarCarga={() => buscarCargaHub()}
+          onAceitarCarga={() => cargaOferecida && ajudanteHub && aplicarCarga(cargaOferecida.doc, deliveries, 'hub')}
+          onCarregarArquivo={handleCarregarArquivo}
           onEnviarAoHub={handleEnviarAoHub}
           onEncerrarSessao={handleEncerrarSessao}
-          onRetomarSessao={handleRetomarSessao}
+          onRecarregarPerfis={carregarPerfis}
+          onMudarUrlHub={handleUrlHub}
         />
         {activeTab === 'ruas' && (
           <StreetPackageManager

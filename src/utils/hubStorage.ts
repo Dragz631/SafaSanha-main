@@ -4,6 +4,7 @@
  * (Sincronização real, com fila controlada e confirmação do HUB, vem depois.)
  */
 import type { AjudanteHub, Guardados, ItemSaida } from '../domain/cargaHub';
+import type { MemoriaOperacional } from '../domain/memoria';
 import { gravarJSON, lerJSON } from './persistencia';
 
 /** Ajudante da SESSÃO ativa (não do aparelho). */
@@ -24,3 +25,8 @@ export const lerGuardados = () => {
   return g && typeof g === 'object' && !Array.isArray(g) ? (g as Guardados) : {};
 };
 export const gravarGuardados = (g: Guardados) => gravarJSON(CHAVE_GUARDADOS, g);
+
+/** Memória do aparelho usada quando NENHUM perfil está em sessão (uso livre do Street). */
+const CHAVE_MEMORIA_SEM_PERFIL = 'logiscan_street_memoria_sem_perfil_v0';
+export const lerMemoriaSemPerfil = () => lerJSON<MemoriaOperacional | null>(CHAVE_MEMORIA_SEM_PERFIL, null);
+export const gravarMemoriaSemPerfil = (m: MemoriaOperacional) => gravarJSON(CHAVE_MEMORIA_SEM_PERFIL, m);

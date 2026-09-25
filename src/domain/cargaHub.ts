@@ -45,7 +45,15 @@ export interface PacoteCarga {
 export interface DocumentoCarga {
   schema: typeof SCHEMA_CARGA;
   gerado_em: string;
-  carga: { id: string; codigo: string; criada_em: string; criada_por: string };
+  carga: {
+    id: string;
+    codigo: string;
+    criada_em: string;
+    criada_por: string;
+    /** Opcional: MONTADA = ainda no galpão (rota não iniciada no HUB); EM_ROTA = rota iniciada. */
+    situacao?: 'MONTADA' | 'EM_ROTA';
+    rota_iniciada_em?: string | null;
+  };
   ajudante: AjudanteHub;
   pacotes: PacoteCarga[];
 }
@@ -109,8 +117,15 @@ export function podeCarregar(sessao: AjudanteHub | null, carga: DocumentoCarga):
   return sessao.id === carga.ajudante.id ? 'ok' : 'outro_ajudante';
 }
 
-/** Cargas/pacotes/eventos de um ajudante guardados enquanto a sessão dele está encerrada. */
-export type Guardados = Record<string, { ajudante: AjudanteHub; pacotes: DeliveryData[]; saida: ItemSaida[] }>;
+/**
+ * Tudo que é do PERFIL de um ajudante, guardado enquanto a sessão dele está encerrada:
+ * pacotes da carga, fila de eventos e a MEMÓRIA PESSOAL dele (conhecimento de endereços do Street).
+ * A memória do HUB (regiões) e o histórico oficial dos pacotes vivem no HUB — não aqui.
+ */
+export type Guardados = Record<
+  string,
+  { ajudante: AjudanteHub; pacotes: DeliveryData[]; saida: ItemSaida[]; memoria?: MemoriaOperacional }
+>;
 
 /**
  * Encerra a sessão: os pacotes de carga e a fila de eventos do ajudante saem da tela e ficam guardados
@@ -121,6 +136,7 @@ export function encerrarSessao(
   deliveries: DeliveryData[],
   saida: ItemSaida[],
   guardados: Guardados,
+  memoria?: MemoriaOperacional,
 ): { deliveries: DeliveryData[]; saida: ItemSaida[]; guardados: Guardados } {
   const dele = deliveries.filter((d) => d.hub?.ajudante_id === sessao.id);
   const anterior = guardados[sessao.id];
@@ -134,6 +150,7 @@ export function encerrarSessao(
         ajudante: sessao,
         pacotes: [...dele, ...(anterior?.pacotes ?? []).filter((d) => !idsDele.has(d.id_entrega))],
         saida: [...(anterior?.saida ?? []).filter((e) => !saida.some((x) => x.id_evento === e.id_evento)), ...saida],
+        memoria: memoria ?? anterior?.memoria,
       },
     },
   };
@@ -144,7 +161,7 @@ export function iniciarSessao(
   ajudante: AjudanteHub,
   deliveries: DeliveryData[],
   guardados: Guardados,
-): { deliveries: DeliveryData[]; saida: ItemSaida[]; guardados: Guardados } {
+): { deliveries: DeliveryData[]; saida: ItemSaida[]; guardados: Guardados; memoria: MemoriaOperacional | null } {
   const outros = deliveries.filter((d) => d.hub && d.hub.ajudante_id !== ajudante.id);
   if (outros.length > 0) {
     throw new Error(`há ${outros.length} pacote(s) de carga de outro ajudante na tela: encerre a sessão dele antes`);
@@ -156,7 +173,25 @@ export function iniciarSessao(
     deliveries: [...(g?.pacotes ?? []).filter((d) => !naTela.has(d.id_entrega)), ...deliveries],
     saida: g?.saida ?? [],
     guardados: resto,
+    /** Memória pessoal do perfil (null = perfil novo neste aparelho, sem memória ainda). */
+    memoria: g?.memoria ?? null,
   };
+}
+
+/** A carga que chegou pelo transporte é deste perfil? Nunca aceitar a de outro em silêncio. */
+export function cargaDoPerfil(sessao: AjudanteHub | null, carga: DocumentoCarga): boolean {
+  return !!sessao && carga.ajudante.id === sessao.id;
+}
+
+/**
+ * Pacotes da carga que estão no aparelho mas SAÍRAM da carga no HUB (rua removida/reatribuída antes
+ * da rota). Só os ainda pendentes saem da tela; um pacote com desfecho local nunca some.
+ */
+export function retiradosDaCarga(carga: DocumentoCarga, noAparelho: DeliveryData[]): { remover: string[]; comDesfecho: number } {
+  const naCarga = new Set(carga.pacotes.map((p) => p.hub_pacote_id));
+  const fora = noAparelho.filter((d) => d.hub?.carga_id === carga.carga.id && !naCarga.has(d.hub.pacote_id));
+  const comDesfecho = fora.filter((d) => statusEntregue(d) || d.status === 'insucesso');
+  return { remover: fora.filter((d) => !comDesfecho.includes(d)).map((d) => d.id_entrega), comDesfecho: comDesfecho.length };
 }
 
 // ---------------------------------------------------------------------------

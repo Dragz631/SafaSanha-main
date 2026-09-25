@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type DocumentoCarga,
   acumularSaida,
+  cargaDoPerfil,
   detectarEventos,
   encerrarSessao,
   iniciarSessao,
@@ -9,10 +10,11 @@ import {
   montarDocumentoEventos,
   podeCarregar,
   receberCarga,
+  retiradosDaCarga,
   validarCarga,
 } from './cargaHub';
 import { aplicarEntrega, aplicarInsucesso } from './entrega';
-import { memoriaVazia } from './memoria';
+import { type MemoriaOperacional, memoriaVazia } from './memoria';
 
 const AGORA = '2026-09-24T12:00:00.000Z';
 const HUGO = { id: 'aj-hugo', nome: 'Hugo' };
@@ -211,5 +213,46 @@ describe('sessão do ajudante (aparelho ≠ pessoa)', () => {
     expect(volta.guardados).toHaveProperty(ANA.id);
     expect(volta.guardados).not.toHaveProperty(HUGO.id);
     expect(montarDocumentoEventos(volta.saida, HUGO, AGORA).eventos.every((e) => e.carga_id === 'carga-1')).toBe(true);
+  });
+});
+
+describe('perfil do ajudante no Street (V0.2 orquestração)', () => {
+  it('18. só aceita a carga do perfil ativo; sem perfil, não aceita', () => {
+    expect(cargaDoPerfil(HUGO, carga())).toBe(true);
+    expect(cargaDoPerfil(ANA, carga())).toBe(false);
+    expect(cargaDoPerfil(null, carga())).toBe(false);
+  });
+
+  it('10. a memória pessoal fica vinculada ao perfil e volta com ele', () => {
+    const memHugo: MemoriaOperacional = receberCarga(memoriaVazia(), carga(), [], AGORA).memoria;
+    expect(Object.keys(memHugo.destinos).length).toBeGreaterThan(0);
+    const telaHugo = receberCarga(memoriaVazia(), carga(), [], AGORA).novos;
+
+    const fim = encerrarSessao(HUGO, telaHugo, [], {}, memHugo);
+    expect(fim.guardados[HUGO.id].memoria).toEqual(memHugo);
+
+    const ana = iniciarSessao(ANA, fim.deliveries, fim.guardados);
+    expect(ana.memoria).toBeNull(); // perfil novo: sem memória do Hugo
+    const memAna = receberCarga(memoriaVazia(), cargaDaAna(), ana.deliveries, AGORA).memoria;
+    const fimAna = encerrarSessao(ANA, [], [], ana.guardados, memAna);
+
+    const volta = iniciarSessao(HUGO, fimAna.deliveries, fimAna.guardados);
+    expect(volta.memoria).toEqual(memHugo);
+    expect(Object.keys(volta.memoria!.destinos)).not.toContain(Object.keys(memAna.destinos)[0]);
+  });
+
+  it('rua removida no HUB antes da rota sai do aparelho; pacote com desfecho local nunca some', () => {
+    const tela = receberCarga(memoriaVazia(), carga(), [], AGORA).novos;
+    const semP2 = { ...carga(), pacotes: carga().pacotes.filter((p) => p.hub_pacote_id !== 'p2') };
+    expect(retiradosDaCarga(semP2, tela)).toEqual({ remover: ['hub_p2'], comDesfecho: 0 });
+    const entregueLocal = tela.map((d) => (d.id_entrega === 'hub_p2' ? aplicarEntrega(d, { recebedor_tipo: 'vizinho', recebedor_detalhes: 'x' }, AGORA) : d));
+    expect(retiradosDaCarga(semP2, entregueLocal)).toEqual({ remover: [], comDesfecho: 1 });
+  });
+
+  it('19. reenvio da mesma carga pelo transporte é idempotente', () => {
+    const r1 = receberCarga(memoriaVazia(), carga(), [], AGORA);
+    const r2 = receberCarga(r1.memoria, carga(), r1.novos, AGORA);
+    expect(r2.novos).toEqual([]);
+    expect(retiradosDaCarga(carga(), r1.novos).remover).toEqual([]);
   });
 });
