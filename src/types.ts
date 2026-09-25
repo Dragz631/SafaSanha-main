@@ -75,6 +75,17 @@ export interface DeliveryData {
   historico_transferencia?: string[];
   lote_bloco_id?: string;
   qtd_pacotes_cliente?: number;
+  /**
+   * Presente quando o pacote veio de uma CARGA do LogiScan HUB (contrato logiscan.carga/v0).
+   * É o vínculo para devolver ao HUB o que aconteceu com ele. Ausente = pacote cadastrado no próprio Street.
+   */
+  hub?: {
+    pacote_id: string;
+    transportadora: string;
+    carga_id: string;
+    carga_codigo: string;
+    ajudante_id: string;
+  };
 }
 
 export interface CompletedDayRecord {

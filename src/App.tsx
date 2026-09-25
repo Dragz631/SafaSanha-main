@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Header } from './components/Header';
 import { FloatingMoneyReward } from './components/FloatingMoneyReward';
@@ -10,7 +10,21 @@ import { AssociationTab } from './components/AssociationTab';
 import { DailyStreetPickerModal } from './components/DailyStreetPickerModal';
 import { DeliveryData } from './types';
 import { CAJU_PRIMARY_AREAS } from './data/cajuStreets';
-import { MemoriaProvider } from './state/MemoriaContext';
+import { MemoriaProvider, useMemoria } from './state/MemoriaContext';
+import { PainelHub } from './components/PainelHub';
+import {
+  type AjudanteHub,
+  type ItemSaida,
+  acumularSaida,
+  detectarEntregas,
+  donoDaCarga,
+  marcarExportados,
+  montarDocumentoEventos,
+  pendentesDoAjudante,
+  receberCarga,
+  validarCarga,
+} from './domain/cargaHub';
+import { gravarAjudanteDoAparelho, gravarSaida, lerAjudanteDoAparelho, lerSaida } from './utils/hubStorage';
 import { contarPacotes, pacotesDaRua, ruasDosPacotes, statusEntregue } from './domain/ruas';
 import { dataLocal } from './domain/data';
 import { chaveTexto } from './domain/texto';
@@ -100,6 +114,79 @@ function Conteudo() {
   useEffect(() => {
     gravarJSON(STREETS_STORAGE_KEY, savedStreets);
   }, [savedStreets]);
+
+  // ---- Ponte com o LogiScan HUB (carga → Street → eventos) ----------------------
+  const { memoria, atualizar } = useMemoria();
+  const [ajudanteHub, setAjudanteHub] = useState<AjudanteHub | null>(lerAjudanteDoAparelho);
+  const [saidaHub, setSaidaHub] = useState<ItemSaida[]>(lerSaida);
+  const [avisoHub, setAvisoHub] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+  useEffect(() => {
+    gravarAjudanteDoAparelho(ajudanteHub);
+  }, [ajudanteHub]);
+  useEffect(() => {
+    gravarSaida(saidaHub);
+  }, [saidaHub]);
+
+  // Qualquer baixa de um pacote da carga (por qualquer tela) vira evento na fila para o HUB.
+  const deliveriesAnteriores = useRef(deliveries);
+  useEffect(() => {
+    const novos = detectarEntregas(deliveriesAnteriores.current, deliveries);
+    deliveriesAnteriores.current = deliveries;
+    if (novos.length > 0) setSaidaHub((s) => acumularSaida(s, novos));
+  }, [deliveries]);
+
+  const handleCarregarCarga = async (arquivo: File) => {
+    let bruto: unknown;
+    try {
+      bruto = JSON.parse(await arquivo.text());
+    } catch {
+      setAvisoHub({ tipo: 'erro', texto: `${arquivo.name} não é um JSON válido.` });
+      return;
+    }
+    const v = validarCarga(bruto);
+    if ('erros' in v) {
+      setAvisoHub({ tipo: 'erro', texto: `Carga recusada: ${v.erros.slice(0, 3).join('; ')}` });
+      return;
+    }
+    const carga = v.carga;
+    if (donoDaCarga(ajudanteHub, carga) === 'outro_ajudante' && ajudanteHub) {
+      const pendentes = pendentesDoAjudante(deliveries, ajudanteHub.id);
+      if (pendentes > 0) {
+        setAvisoHub({
+          tipo: 'erro',
+          texto: `Esta carga é de ${carga.ajudante.nome}, mas este aparelho está com ${ajudanteHub.nome} e ainda tem ${pendentes} pacote(s) dele na rua.`,
+        });
+        return;
+      }
+      if (!window.confirm(`Esta carga é de ${carga.ajudante.nome}. Passar este aparelho de ${ajudanteHub.nome} para ${carga.ajudante.nome}?`)) return;
+    }
+    const agora = new Date().toISOString();
+    const r = receberCarga(memoria, carga, deliveries, agora);
+    atualizar(() => r.memoria);
+    setAjudanteHub(carga.ajudante);
+    if (r.novos.length > 0) setDeliveries((prev) => [...r.novos, ...prev]);
+    setAvisoHub({
+      tipo: 'ok',
+      texto:
+        `Carga ${carga.carga.codigo}: ${r.novos.length} pacote(s) carregado(s)` +
+        (r.jaNoAparelho ? `, ${r.jaNoAparelho} já estavam no aparelho` : '') +
+        (r.destinoPendente ? `, ${r.destinoPendente} com destino a confirmar` : '') +
+        '.',
+    });
+  };
+
+  const handleEnviarAoHub = () => {
+    if (!ajudanteHub || saidaHub.length === 0) return;
+    const agora = new Date().toISOString();
+    const doc = montarDocumentoEventos(saidaHub, ajudanteHub, agora);
+    const nome = `retorno-street-${ajudanteHub.nome.replace(/[^\w-]+/g, '_')}-${agora.slice(0, 16).replace(/[:T]/g, '-')}.json`;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: nome });
+    a.click();
+    URL.revokeObjectURL(url);
+    setSaidaHub((s) => marcarExportados(s, agora));
+    setAvisoHub({ tipo: 'ok', texto: `${nome} gerado com ${doc.eventos.length} evento(s). Leve este arquivo ao HUB.` });
+  };
 
   // Ruas dos pacotes carregados entram na lista da região (sem duplicar e sem soltar sub-ruas da Manilha)
   useEffect(() => {
@@ -216,6 +303,14 @@ function Conteudo() {
       />
 
       <main className="flex-1 max-w-xl mx-auto w-full px-3 sm:px-4 py-2">
+        <PainelHub
+          deliveries={deliveries}
+          ajudante={ajudanteHub}
+          saida={saidaHub}
+          aviso={avisoHub}
+          onCarregarCarga={handleCarregarCarga}
+          onEnviarAoHub={handleEnviarAoHub}
+        />
         {activeTab === 'ruas' && (
           <StreetPackageManager
             deliveries={deliveries}
