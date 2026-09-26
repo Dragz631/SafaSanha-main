@@ -220,7 +220,15 @@ function Conteudo() {
     if (ret.remover.length) partes.push(`${ret.remover.length} retirado(s) da carga pelo HUB`);
     if (r.destinoPendente) partes.push(`${r.destinoPendente} com destino a confirmar`);
     const aguardando = carga.carga.situacao === 'MONTADA' ? ' Rota ainda não iniciada no HUB.' : '';
-    setAvisoHub({ tipo: 'ok', texto: `Carga ${carga.carga.codigo} (${origem === 'hub' ? 'direto do HUB' : 'arquivo'}): ${partes.join(', ')}.${aguardando}` });
+    const ruasNovas = [...new Set(carga.pacotes.filter((p) => r.novos.some((d) => d.hub?.pacote_id === p.hub_pacote_id)).map((p) => p.rua))];
+    const titulo =
+      origem === 'hub'
+        ? `${lista.some((d) => d.hub?.carga_id === carga.carga.id) ? 'Carga atualizada' : 'Nova carga'} do HUB para ${carga.ajudante.nome} — ${carga.carga.codigo}`
+        : `Carga ${carga.carga.codigo} (arquivo)`;
+    setAvisoHub({
+      tipo: 'ok',
+      texto: `${titulo}: ${partes.join(', ')}${ruasNovas.length ? ` · ruas: ${ruasNovas.join(', ')}` : ''}.${aguardando}`,
+    });
     if (origem === 'hub') {
       transporte.confirmarRecebimento(carga.carga.id, carga.ajudante.id, carga.pacotes.length).catch(() => undefined);
     }
@@ -235,13 +243,17 @@ function Conteudo() {
     buscarCargaHub(ajudante, aberta.lista);
   };
 
-  const buscarCargaHub = async (perfil = ajudanteHub, lista = deliveries) => {
+  /**
+   * Busca no HUB a carga do PERFIL ativo e, se houver novidade (ruas repassadas/retiradas), carrega na hora
+   * com aviso claro. `automatico` = chamada do sincronismo periódico: sem mensagens quando nada mudou.
+   */
+  const buscarCargaHub = async (perfil = ajudanteHub, lista = deliveries, automatico = false) => {
     if (!perfil) return;
     try {
       const [doc] = await transporte.cargasDoPerfil(perfil.id);
       if (!doc) {
         setCargaOferecida(null);
-        setAvisoHub({ tipo: 'ok', texto: `Nenhuma carga ativa para ${perfil.nome} no HUB.` });
+        if (!automatico) setAvisoHub({ tipo: 'ok', texto: `Nenhuma carga ativa para ${perfil.nome} no HUB.` });
         return;
       }
       const v = validarCarga(doc);
@@ -258,14 +270,34 @@ function Conteudo() {
       const retirados = retiradosDaCarga(v.carga, lista).remover.length;
       if (novos === 0 && retirados === 0) {
         setCargaOferecida(null);
-        setAvisoHub({ tipo: 'ok', texto: `Carga ${v.carga.carga.codigo} já está atualizada neste aparelho.` });
+        if (!automatico) setAvisoHub({ tipo: 'ok', texto: `Carga ${v.carga.carga.codigo} já está atualizada neste aparelho.` });
         return;
       }
-      setCargaOferecida({ doc: v.carga, novos, retirados });
+      // É a carga DESTE perfil: entra direto, com aviso claro (carga de outro perfil nunca chega aqui).
+      aplicarCarga(v.carga, lista, 'hub');
     } catch (e) {
-      setAvisoHub({ tipo: 'erro', texto: e instanceof ErroTransporte ? `${e.message}. Use o arquivo da carga.` : (e as Error).message });
+      if (!automatico) {
+        setAvisoHub({ tipo: 'erro', texto: e instanceof ErroTransporte ? `${e.message}. Use o arquivo da carga.` : (e as Error).message });
+      }
     }
   };
+
+  // Sincronismo HUB → Street: com um perfil ativo, confere a carga dele a cada 15 s e ao voltar para o app.
+  const buscarRef = useRef(buscarCargaHub);
+  buscarRef.current = buscarCargaHub;
+  useEffect(() => {
+    if (!ajudanteHub) return;
+    const tick = () => buscarRef.current(undefined, undefined, true);
+    const id = window.setInterval(tick, 15000);
+    const aoVoltar = () => document.visibilityState === 'visible' && tick();
+    document.addEventListener('visibilitychange', aoVoltar);
+    window.addEventListener('focus', aoVoltar);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', aoVoltar);
+      window.removeEventListener('focus', aoVoltar);
+    };
+  }, [ajudanteHub, transporte]);
 
   const handleCarregarArquivo = async (arquivo: File) => {
     let bruto: unknown;
