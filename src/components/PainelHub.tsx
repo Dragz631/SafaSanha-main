@@ -7,7 +7,7 @@
 import React, { useRef, useState } from 'react';
 import { Download, FileJson, LogOut, RefreshCw, Send, Upload, UserRound, Warehouse } from 'lucide-react';
 import type { DeliveryData } from '../types';
-import type { AjudanteHub, DocumentoCarga, ItemSaida } from '../domain/cargaHub';
+import type { AjudanteHub, DocumentoCarga, ItemSaida, RuaEmRevisao } from '../domain/cargaHub';
 import { ruaRealDoPacote, statusEntregue } from '../domain/ruas';
 import { chaveTexto } from '../domain/texto';
 
@@ -30,7 +30,46 @@ interface Props {
   onEncerrarSessao: () => void;
   onRecarregarPerfis: () => void;
   onMudarUrlHub: (url: string) => void;
+  /** Ruas/regiões da carga que o Street não reconheceu (NOVA RUA / CONHECIMENTO NÃO RECONHECIDO). */
+  revisaoRuas: RuaEmRevisao[];
+  /** Cards existentes onde dá para encaixar. */
+  cardsParaEncaixe: string[];
+  onEncaixarRua: (chave: string, card: string) => void;
+  onCriarCardRua: (chave: string, nome: string) => void;
+  onCriarCardRegiao: (regiao: string) => void;
 }
+
+/** Uma rua não reconhecida: encaixar num card que já existe ou criar o card — só por decisão da pessoa. */
+const LinhaRevisao: React.FC<{
+  r: RuaEmRevisao;
+  cards: string[];
+  onEncaixar: (card: string) => void;
+  onCriarRua: () => void;
+  onCriarRegiao: () => void;
+}> = ({ r, cards, onEncaixar, onCriarRua, onCriarRegiao }) => {
+  const [card, setCard] = useState('');
+  return (
+    <li className="rounded-lg border border-amber-400/40 bg-slate-950/40 p-2">
+      <div>
+        <b className="text-white">{r.nome}</b> <span className="text-amber-200/80">· {r.pacotes} pacote(s)</span>
+        {r.regiao && <span className="text-slate-400"> · região no HUB: {r.regiao}</span>}
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <select value={card} onChange={(e) => setCard(e.target.value)} aria-label={`Card para ${r.nome}`} className="rounded-lg bg-slate-900 border border-slate-700 px-1.5 py-1">
+          <option value="">Encaixar em…</option>
+          {cards.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <button type="button" disabled={!card} onClick={() => onEncaixar(card)} className={`${botao} bg-amber-400 text-slate-950`}>Encaixar</button>
+        <button type="button" onClick={onCriarRua} className={`${botao} border border-slate-600 text-slate-200`}>Criar card “{r.nome}”</button>
+        {r.regiao && (
+          <button type="button" onClick={onCriarRegiao} className={`${botao} border border-slate-600 text-slate-200`}>Criar card da região “{r.regiao}”</button>
+        )}
+      </div>
+    </li>
+  );
+};
 
 const botao = 'flex items-center gap-1 rounded-lg px-2.5 py-1.5 font-black disabled:opacity-40';
 
@@ -171,6 +210,27 @@ export const PainelHub: React.FC<Props> = (p) => {
           <button type="button" onClick={p.onAceitarCarga} className={`${botao} mt-1.5 bg-amber-400 text-slate-950`}>
             Carregar no perfil de {p.cargaOferecida.doc.ajudante.nome}
           </button>
+        </div>
+      )}
+
+      {p.revisaoRuas.length > 0 && (
+        <div className="mt-2 rounded-xl border border-amber-400/50 bg-amber-400/10 p-2.5" role="region" aria-label="Ruas não reconhecidas">
+          <div className="font-black text-amber-200 uppercase tracking-tight">Nova rua / conhecimento não reconhecido</div>
+          <div className="text-amber-100/80 mb-1.5">
+            Estes pacotes chegaram do HUB numa rua que o Street não conhece. Nenhum card foi criado sozinho: diga onde eles ficam.
+          </div>
+          <ul className="flex flex-col gap-1.5">
+            {p.revisaoRuas.map((r) => (
+              <LinhaRevisao
+                key={r.chave}
+                r={r}
+                cards={p.cardsParaEncaixe}
+                onEncaixar={(card) => p.onEncaixarRua(r.chave, card)}
+                onCriarRua={() => p.onCriarCardRua(r.chave, r.nome)}
+                onCriarRegiao={() => r.regiao && p.onCriarCardRegiao(r.regiao)}
+              />
+            ))}
+          </ul>
         </div>
       )}
 

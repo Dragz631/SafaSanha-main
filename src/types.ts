@@ -85,7 +85,19 @@ export interface DeliveryData {
     carga_id: string;
     carga_codigo: string;
     ajudante_id: string;
+    /** Identidade da rua vinda do HUB (street_id, mesma regra nos dois projetos) e nome de apresentação. */
+    rua_id?: string;
+    rua_nome?: string;
+    /** Região operacional no HUB (organização; nunca muda a identidade da rua). */
+    regiao_nome?: string | null;
+    /** true = o Street não reconheceu a rua/região: fica em revisão, sem criar card sozinho. */
+    revisar_rua?: boolean;
   };
+  /**
+   * Card do Street onde o pacote foi ENCAIXADO (rua ou região já existente). Ausente = regra antiga
+   * (rua escrita no pacote). Não altera o endereço original.
+   */
+  rua_operacional?: string;
 }
 
 export interface CompletedDayRecord {

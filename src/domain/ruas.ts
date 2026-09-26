@@ -43,6 +43,8 @@ export function ruaRealDoPacote(d: DeliveryData): string {
 export function pertenceARua(d: DeliveryData, rua: string): boolean {
   const chave = chaveTexto(rua);
   if (!chave) return false;
+  if (d.hub?.revisar_rua) return false; // rua não reconhecida: aguarda revisão (painel do HUB), não entra em card nenhum
+  if (d.rua_operacional) return chaveTexto(d.rua_operacional) === chave; // encaixe decidido (HUB ou revisão)
   if (ehAreaManilha(rua)) return isManilhaDelivery(d);
   if (isManilhaDelivery(d)) return false;
   return chaveTexto(ruaBaseDoPacote(d)) === chave;
@@ -54,15 +56,21 @@ export function pacotesDaRua(lista: DeliveryData[], rua: string): DeliveryData[]
 
 /** Pacotes que não pertencem a nenhuma rua (dados inconsistentes) — nunca contam para uma rua. */
 export function pacotesSemRua(lista: DeliveryData[]): DeliveryData[] {
-  return lista.filter((d) => !isManilhaDelivery(d) && !chaveTexto(ruaBaseDoPacote(d)));
+  return lista.filter((d) => !d.hub?.revisar_rua && !d.rua_operacional && !isManilhaDelivery(d) && !chaveTexto(ruaBaseDoPacote(d)));
+}
+
+/** Pacotes do HUB cuja rua o Street não reconheceu (aguardando revisão). */
+export function pacotesEmRevisaoDeRua(lista: DeliveryData[]): DeliveryData[] {
+  return lista.filter((d) => !!d.hub?.revisar_rua);
 }
 
 /** Ruas presentes nos pacotes (exceto Manilha), sem duplicar por caixa/acento. */
 export function ruasDosPacotes(lista: DeliveryData[]): string[] {
   const mapa = new Map<string, string>();
   for (const d of lista) {
-    if (isManilhaDelivery(d)) continue;
-    const nome = ruaBaseDoPacote(d);
+    if (d.hub?.revisar_rua) continue; // não cria card para rua não reconhecida
+    if (!d.rua_operacional && isManilhaDelivery(d)) continue;
+    const nome = d.rua_operacional || ruaBaseDoPacote(d);
     const chave = chaveTexto(nome);
     if (chave && !mapa.has(chave)) mapa.set(chave, nome);
   }

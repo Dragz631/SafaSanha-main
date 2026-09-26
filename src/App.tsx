@@ -9,16 +9,18 @@ import { CloseDayModal } from './components/CloseDayModal';
 import { AssociationTab } from './components/AssociationTab';
 import { DailyStreetPickerModal } from './components/DailyStreetPickerModal';
 import { DeliveryData } from './types';
-import { CAJU_PRIMARY_AREAS } from './data/cajuStreets';
+import { CAJU_PRIMARY_AREAS, DAILY_STREET_CARDS, MANILHA_SUB_STREETS } from './data/cajuStreets';
 import { MemoriaProvider, useMemoria } from './state/MemoriaContext';
 import { PainelHub } from './components/PainelHub';
 import {
   type AjudanteHub,
+  type CatalogoRuas,
   type DocumentoCarga,
   type Guardados,
   type ItemSaida,
   acumularSaida,
   cargaDoPerfil,
+  chaveRegiao,
   detectarEventos,
   encerrarSessao,
   iniciarSessao,
@@ -26,22 +28,29 @@ import {
   montarDocumentoEventos,
   podeCarregar,
   receberCarga,
+  reencaixar,
   retiradosDaCarga,
+  ruasEmRevisao,
+  semEncaixe,
   validarCarga,
 } from './domain/cargaHub';
 import { memoriaVazia } from './domain/memoria';
 import {
   gravarAjudanteDoAparelho,
+  gravarApelidosRua,
+  gravarCardsDeRegiao,
   gravarGuardados,
   gravarMemoriaSemPerfil,
   gravarSaida,
   lerAjudanteDoAparelho,
+  lerApelidosRua,
+  lerCardsDeRegiao,
   lerGuardados,
   lerMemoriaSemPerfil,
   lerSaida,
 } from './utils/hubStorage';
 import { ErroTransporte, gravarUrlHub, lerUrlHub, transporteHttp } from './utils/transporteHub';
-import { contarPacotes, pacotesDaRua, ruasDosPacotes, statusEntregue } from './domain/ruas';
+import { contarPacotes, ehAreaManilha, pacotesDaRua, ruasDosPacotes, statusEntregue } from './domain/ruas';
 import { dataLocal } from './domain/data';
 import { chaveTexto } from './domain/texto';
 import { gravarJSON, lerJSON, removerChave, useFalhasDeGravacao } from './utils/persistencia';
@@ -132,6 +141,18 @@ function Conteudo() {
   }, [savedStreets]);
 
   // ---- Ponte com o LogiScan HUB (carga → Street → eventos) ----------------------
+  /** Cards que o Street já tem: a carga do HUB só ENCAIXA aqui (nada nasce sozinho). */
+  const montarCatalogo = (ruas = savedStreets, apelidos = apelidosRua, regioes = cardsRegiao): CatalogoRuas => {
+    const cardsHub = DAILY_STREET_CARDS.filter((c) => c.type === 'hub').map((c) => c.streetName);
+    const ehRegiao = (n: string) => ehAreaManilha(n) || [...cardsHub, ...regioes].some((r) => chaveTexto(r) === chaveTexto(n));
+    return {
+      ruas: [...DAILY_STREET_CARDS.filter((c) => c.type === 'street').map((c) => c.streetName), ...ruas.filter((n) => !ehRegiao(n))],
+      manilha: MANILHA_SUB_STREETS.map((m) => m.name),
+      regioes: [...cardsHub.filter((n) => !ehAreaManilha(n)), ...regioes],
+      apelidos,
+    };
+  };
+
   // A identidade vem do PERFIL escolhido (sessão), não do aparelho. Trocar de perfil é sempre explícito.
   // Memórias separadas: a memória pessoal (endereços) é do perfil; regiões e histórico oficial são do HUB.
   const { memoria, atualizar } = useMemoria();
@@ -143,6 +164,15 @@ function Conteudo() {
   const [perfisHub, setPerfisHub] = useState<AjudanteHub[] | null>(null);
   const [cargaOferecida, setCargaOferecida] = useState<{ doc: DocumentoCarga; novos: number; retirados: number } | null>(null);
   const transporte = useMemo(() => transporteHttp(urlHub), [urlHub]);
+  // Conhecimento de ruas do aparelho decidido na revisão (rua/região do HUB → card existente).
+  const [apelidosRua, setApelidosRua] = useState<Record<string, string>>(lerApelidosRua);
+  const [cardsRegiao, setCardsRegiao] = useState<string[]>(lerCardsDeRegiao);
+  useEffect(() => {
+    gravarApelidosRua(apelidosRua);
+  }, [apelidosRua]);
+  useEffect(() => {
+    gravarCardsDeRegiao(cardsRegiao);
+  }, [cardsRegiao]);
   useEffect(() => {
     gravarAjudanteDoAparelho(ajudanteHub);
   }, [ajudanteHub]);
@@ -210,24 +240,29 @@ function Conteudo() {
   /** Aplica uma carga (vinda do HUB ou de arquivo) ao perfil ativo. */
   const aplicarCarga = (carga: DocumentoCarga, lista: DeliveryData[], origem: 'hub' | 'arquivo', base = memoria) => {
     const agora = new Date().toISOString();
-    const r = receberCarga(base, carga, lista, agora);
+    const r = receberCarga(base, carga, lista, agora, montarCatalogo());
     const ret = retiradosDaCarga(carga, lista);
+    const trocados = new Map(r.atualizados.map((d) => [d.id_entrega, d]));
     atualizar(() => r.memoria);
-    trocarLista([...r.novos, ...lista.filter((d) => !ret.remover.includes(d.id_entrega))]);
+    trocarLista([...r.novos, ...lista.filter((d) => !ret.remover.includes(d.id_entrega)).map((d) => trocados.get(d.id_entrega) ?? d)]);
     setCargaOferecida(null);
     const partes = [`${r.novos.length} pacote(s) novo(s)`];
     if (r.jaNoAparelho) partes.push(`${r.jaNoAparelho} já estavam no aparelho`);
     if (ret.remover.length) partes.push(`${ret.remover.length} retirado(s) da carga pelo HUB`);
     if (r.destinoPendente) partes.push(`${r.destinoPendente} com destino a confirmar`);
+    if (r.atualizados.length) partes.push(`${r.atualizados.length} encaixado(s) nos cards existentes`);
     const aguardando = carga.carga.situacao === 'MONTADA' ? ' Rota ainda não iniciada no HUB.' : '';
-    const ruasNovas = [...new Set(carga.pacotes.filter((p) => r.novos.some((d) => d.hub?.pacote_id === p.hub_pacote_id)).map((p) => p.rua))];
+    const ruasNovas = [...new Set(r.novos.filter((d) => !d.hub?.revisar_rua).map((d) => d.rua_operacional || d.sub_rua_manilha || d.endereco_rua || ''))].filter(Boolean);
     const titulo =
       origem === 'hub'
         ? `${lista.some((d) => d.hub?.carga_id === carga.carga.id) ? 'Carga atualizada' : 'Nova carga'} do HUB para ${carga.ajudante.nome} — ${carga.carga.codigo}`
         : `Carga ${carga.carga.codigo} (arquivo)`;
+    const revisar = r.revisar.length
+      ? ` ${r.revisar.length} rua(s) NÃO RECONHECIDA(S) — nenhum card foi criado; revise abaixo: ${r.revisar.map((x) => x.nome).join(', ')}.`
+      : '';
     setAvisoHub({
-      tipo: 'ok',
-      texto: `${titulo}: ${partes.join(', ')}${ruasNovas.length ? ` · ruas: ${ruasNovas.join(', ')}` : ''}.${aguardando}`,
+      tipo: r.revisar.length ? 'erro' : 'ok',
+      texto: `${titulo}: ${partes.join(', ')}${ruasNovas.length ? ` · cards: ${ruasNovas.join(', ')}` : ''}.${aguardando}${revisar}`,
     });
     if (origem === 'hub') {
       transporte.confirmarRecebimento(carga.carga.id, carga.ajudante.id, carga.pacotes.length).catch(() => undefined);
@@ -268,7 +303,8 @@ function Conteudo() {
       const naTela = new Set(lista.map((d) => d.hub?.pacote_id).filter(Boolean));
       const novos = v.carga.pacotes.filter((p) => !naTela.has(p.hub_pacote_id)).length;
       const retirados = retiradosDaCarga(v.carga, lista).remover.length;
-      if (novos === 0 && retirados === 0) {
+      const paraEncaixar = semEncaixe(v.carga, lista);
+      if (novos === 0 && retirados === 0 && paraEncaixar === 0) {
         setCargaOferecida(null);
         if (!automatico) setAvisoHub({ tipo: 'ok', texto: `Carga ${v.carga.carga.codigo} já está atualizada neste aparelho.` });
         return;
@@ -407,6 +443,31 @@ function Conteudo() {
     });
   }, [deliveries]);
 
+  // Revisão de ruas não reconhecidas (carga do HUB): encaixar num card existente ou criar o card — sempre por decisão.
+  const decidirRevisao = (apelidos: Record<string, string>, ruas = savedStreets, regioes = cardsRegiao) => {
+    setApelidosRua(apelidos);
+    setDeliveries((prev) => reencaixar(prev, montarCatalogo(ruas, apelidos, regioes)));
+  };
+  const handleEncaixarRua = (chave: string, card: string) => decidirRevisao({ ...apelidosRua, [chave]: card });
+  const handleCriarCardRua = (chave: string, nome: string) => {
+    const ruas = savedStreets.some((s) => chaveTexto(s) === chaveTexto(nome)) ? savedStreets : [...savedStreets, nome];
+    setSavedStreets(ruas);
+    decidirRevisao({ ...apelidosRua, [chave]: nome }, ruas);
+  };
+  const handleCriarCardRegiao = (regiao: string) => {
+    const regioes = cardsRegiao.some((r) => chaveTexto(r) === chaveTexto(regiao)) ? cardsRegiao : [...cardsRegiao, regiao];
+    const ruas = savedStreets.some((s) => chaveTexto(s) === chaveTexto(regiao)) ? savedStreets : [...savedStreets, regiao];
+    setCardsRegiao(regioes);
+    setSavedStreets(ruas);
+    decidirRevisao({ ...apelidosRua, [chaveRegiao(regiao)]: regiao }, ruas, regioes);
+  };
+  const revisaoRuas = useMemo(() => ruasEmRevisao(deliveries), [deliveries]);
+  const cardsParaEncaixe = useMemo(() => {
+    const c = montarCatalogo();
+    return [...new Set([...c.ruas, ...c.regioes, 'Manilha'])].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedStreets, cardsRegiao, apelidosRua]);
+
   // Handlers de Ruas
   const handleAddStreet = (newStreet: string) => {
     const clean = newStreet.trim();
@@ -520,6 +581,11 @@ function Conteudo() {
           onEncerrarSessao={handleEncerrarSessao}
           onRecarregarPerfis={carregarPerfis}
           onMudarUrlHub={handleUrlHub}
+          revisaoRuas={revisaoRuas}
+          cardsParaEncaixe={cardsParaEncaixe}
+          onEncaixarRua={handleEncaixarRua}
+          onCriarCardRua={handleCriarCardRua}
+          onCriarCardRegiao={handleCriarCardRegiao}
         />
         {activeTab === 'ruas' && (
           <StreetPackageManager

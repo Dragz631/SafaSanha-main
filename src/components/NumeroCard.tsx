@@ -17,7 +17,8 @@ import {
 import { DeliveryData } from '../types';
 import type { GrupoDestino, GrupoNumero, PacotePendente } from '../domain/agrupamento';
 import type { TipoDestino } from '../domain/destino';
-import { statusEntregue } from '../domain/ruas';
+import { ruaBaseDoPacote, statusEntregue } from '../domain/ruas';
+import { chaveTexto } from '../domain/texto';
 import { buildGroupedWhatsAppMessage, copyTextToClipboard } from '../utils/whatsappHelper';
 
 /**
@@ -209,6 +210,9 @@ export const NumeroCard: React.FC<NumeroCardProps> = ({
   const pendentesEntrega = todos.filter((p) => !statusEntregue(p) && p.status !== 'insucesso').length;
   const mostrarSemNome = grupo.destinos.length > 1 || grupo.pendentes.length > 0;
   const solo = grupo.destinos.length === 1 && grupo.pendentes.length === 0 && grupo.destinos[0].pacotes.length === 1;
+  // Card de região (ex.: Quinta do Caju) junta várias ruas: o número sozinho não diz onde é — mostra a rua.
+  const ruaDoGrupo = todos[0] ? ruaBaseDoPacote(todos[0]) : '';
+  const mostrarRua = !!todos[0]?.rua_operacional && chaveTexto(ruaDoGrupo) !== chaveTexto(todos[0].rua_operacional);
 
   const copiar = async (destino: GrupoDestino) => {
     const ok = await copyTextToClipboard(buildGroupedWhatsAppMessage(destino.pacotes));
@@ -242,6 +246,7 @@ export const NumeroCard: React.FC<NumeroCardProps> = ({
             {grupo.totalPacotes} {grupo.totalPacotes === 1 ? 'pacote' : 'pacotes'}
             <span className="text-slate-400 font-bold"> • {pendentesEntrega} pendente{pendentesEntrega === 1 ? '' : 's'}</span>
           </div>
+          {mostrarRua && <div className="text-[11px] font-black text-sky-300 truncate" data-testid="rua-do-numero">{ruaDoGrupo}</div>}
           {grupo.destinos.length > 1 && (
             <div className="text-[11px] font-bold text-amber-300">{grupo.destinos.length} locais diferentes neste número</div>
           )}
