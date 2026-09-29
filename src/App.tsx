@@ -243,6 +243,9 @@ function Conteudo() {
     const r = receberCarga(base, carga, lista, agora, montarCatalogo());
     const ret = retiradosDaCarga(carga, lista);
     const trocados = new Map(r.atualizados.map((d) => [d.id_entrega, d]));
+    if (r.cardsCriados.length) {
+      setSavedStreets((prev) => [...prev, ...r.cardsCriados.filter((c) => !prev.some((s) => chaveTexto(s) === chaveTexto(c)))]);
+    }
     atualizar(() => r.memoria);
     trocarLista([...r.novos, ...lista.filter((d) => !ret.remover.includes(d.id_entrega)).map((d) => trocados.get(d.id_entrega) ?? d)]);
     setCargaOferecida(null);
@@ -251,6 +254,7 @@ function Conteudo() {
     if (ret.remover.length) partes.push(`${ret.remover.length} retirado(s) da carga pelo HUB`);
     if (r.destinoPendente) partes.push(`${r.destinoPendente} com destino a confirmar`);
     if (r.atualizados.length) partes.push(`${r.atualizados.length} encaixado(s) nos cards existentes`);
+    if (r.cardsCriados.length) partes.push(`card(s) criado(s) para caixa(s) do HUB: ${r.cardsCriados.join(', ')}`);
     const aguardando = carga.carga.situacao === 'MONTADA' ? ' Rota ainda não iniciada no HUB.' : '';
     const ruasNovas = [...new Set(r.novos.filter((d) => !d.hub?.revisar_rua).map((d) => d.rua_operacional || d.sub_rua_manilha || d.endereco_rua || ''))].filter(Boolean);
     const titulo =

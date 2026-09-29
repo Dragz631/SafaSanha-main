@@ -174,3 +174,57 @@ describe('encaixe nos cards existentes (sem recriar ruas)', () => {
     expect(ruasDosPacotes(r.novos)).toEqual(['Rua X']);
   });
 });
+
+describe('V0.5: a CAIXA oficial do HUB é o card do Street', () => {
+  const caixa = (numero: string, nome: string, nomes_anteriores: string[] = []) => ({ id: `cx-${numero}`, numero, nome, pai: null, nomes_anteriores });
+
+  it('caixa com card existente → encaixa nele (inclusive pelo nome antigo: "Manuel" da caixa 6 "Manoel")', () => {
+    const r = receber(carga([
+      pac('Rua Monsenhor Manoel Gomes', null, { caixa: caixa('6', 'Rua Monsenhor Manoel Gomes', ['Rua Monsenhor Manuel Gomes']) }),
+      pac('Beco Antônio Faria Salgado', null, { caixa: caixa('9', 'Quinta do Caju') }),
+    ]));
+    expect(r.novos.map((d) => d.rua_operacional)).toEqual(['Rua Monsenhor Manuel Gomes', 'Quinta do Caju']);
+    expect(r.cardsCriados).toEqual([]);
+    expect(r.novos[0].hub?.caixa).toMatchObject({ numero: '6', nome: 'Rua Monsenhor Manoel Gomes' });
+  });
+
+  it('caixa oficial sem card no aparelho → o card nasce com o nome da caixa e o Street avisa', () => {
+    const r = receber(carga([
+      pac('Rua Mestre Camargo', null, { caixa: caixa('7', 'Vila Militar') }),
+      pac('Rua General Ponde', null, { caixa: caixa('7', 'Vila Militar') }),
+      pac('Rua Carlos Seidl', null, { caixa: caixa('10.1', 'Associação da Chatuba') }),
+    ]));
+    expect(r.novos.map((d) => d.rua_operacional)).toEqual(['Vila Militar', 'Vila Militar', 'Associação da Chatuba']);
+    expect(r.cardsCriados).toEqual(['Vila Militar', 'Associação da Chatuba']);
+    expect(r.revisar).toEqual([]);
+    expect(pacotesDaRua(r.novos, 'Vila Militar')).toHaveLength(2);
+    expect(r.novos[0].endereco_rua).toBe('Rua Mestre Camargo'); // endereço original intacto
+  });
+
+  it('a caixa manda mais que a rua: Seixas na caixa 1 vai para o card da Carlos Seidl; Carlos Seidl na associação vai para a associação', () => {
+    const r = receber(carga([
+      pac('Rua Carlos Seixas', null, { caixa: caixa('1', 'Rua Carlos Seidl') }),
+      pac('Rua Carlos Seidl', null, { caixa: caixa('10.1', 'Associação da Chatuba') }),
+    ]), { ...CATALOGO, ruas: [...CATALOGO.ruas, 'Associação da Chatuba'] });
+    expect(r.novos.map((d) => d.rua_operacional)).toEqual(['Rua Carlos Seidl', 'Associação da Chatuba']);
+  });
+
+  it('Manilha continua com as sub-ruas; rua da Manilha fora das 14 vai para revisão (não some)', () => {
+    const r = receber(carga([
+      pac('Rua B', null, { caixa: caixa('8', 'Manilha') }),
+      pac('Travessa Arnaldo da Costa', null, { caixa: caixa('8', 'Manilha') }),
+    ]));
+    expect(r.novos[0].sub_rua_manilha).toBe('Rua B');
+    expect(r.novos[1].hub?.revisar_rua).toBe(true);
+  });
+
+  it('pacote que já estava no aparelho sem caixa é encaixado quando a carga chega com a caixa', () => {
+    const antigo = receber(carga([pac('Rua Mestre Camargo')])); // V0.4: rua solta desconhecida → revisão
+    expect(antigo.novos[0].hub?.revisar_rua).toBe(true);
+    const doc = carga([{ ...pac('Rua Mestre Camargo'), hub_pacote_id: antigo.novos[0].hub!.pacote_id, caixa: caixa('7', 'Vila Militar') }]);
+    expect(semEncaixe(doc, antigo.novos)).toBe(1);
+    const r = receberCarga(memoriaVazia(), doc, antigo.novos, AGORA, CATALOGO);
+    expect(r.atualizados.map((d) => [d.rua_operacional, d.hub?.revisar_rua])).toEqual([['Vila Militar', false]]);
+    expect(r.cardsCriados).toEqual(['Vila Militar']);
+  });
+});

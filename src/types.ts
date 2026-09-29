@@ -92,6 +92,8 @@ export interface DeliveryData {
     regiao_nome?: string | null;
     /** true = o Street não reconheceu a rua/região: fica em revisão, sem criar card sozinho. */
     revisar_rua?: boolean;
+    /** CAIXA oficial do HUB em que o pacote saiu (V0.5): vira o card do Street. */
+    caixa?: { id: string; numero: string | null; nome: string; nomes_anteriores: string[] } | null;
   };
   /**
    * Card do Street onde o pacote foi ENCAIXADO (rua ou região já existente). Ausente = regra antiga

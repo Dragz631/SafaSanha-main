@@ -18,6 +18,7 @@ import { confirmarDestino, cadastrarPacote, montarPacote } from './cadastro';
 import { idLogradouro, resolverLogradouro } from './logradouro';
 import type { MemoriaOperacional } from './memoria';
 import { ehAreaManilha, statusEntregue } from './ruas';
+import { chaveTexto } from './texto';
 
 export const SCHEMA_CARGA = 'logiscan.carga/v0';
 export const SCHEMA_EVENTOS = 'logiscan.street-eventos/v0';
@@ -45,6 +46,17 @@ export interface PacoteCarga {
   rua_id?: string;
   rua_nome?: string;
   regiao?: { id: string; nome: string; repasse_unico: boolean } | null;
+  /** V0.5: CAIXA oficial do HUB (decidida pelo Hugo/memória). É o card do Street. */
+  caixa?: CaixaCarga | null;
+}
+
+/** Caixa oficial do HUB: número como o Hugo chama, nome, caixa que agrupa e nomes antigos (para achar o card). */
+export interface CaixaCarga {
+  id: string;
+  numero: string | null;
+  nome: string;
+  pai: { id: string; nome: string } | null;
+  nomes_anteriores: string[];
 }
 
 /** Unidade da carga: uma rua (street_id) com os pacotes dela. */
@@ -53,6 +65,7 @@ export interface ItemCarga {
   rua_nome: string;
   regiao_id: string | null;
   regiao_nome: string | null;
+  caixa?: CaixaCarga | null;
   pacote_ids: string[];
 }
 
@@ -233,14 +246,35 @@ export const chaveRegiao = (nome: string) => `regiao:${idLogradouro(nome)}`;
 
 export type Encaixe =
   | { tipo: 'manilha'; sub: string }
-  | { tipo: 'card'; card: string; por: 'apelido' | 'regiao' | 'rua' }
+  /** `criar` = caixa oficial do HUB sem card no aparelho: o card nasce com o nome da caixa (e o Street avisa). */
+  | { tipo: 'card'; card: string; por: 'caixa' | 'apelido' | 'regiao' | 'rua'; criar?: boolean }
   /** NOVA RUA / CONHECIMENTO NÃO RECONHECIDO: vai para revisão, sem criar card. */
   | { tipo: 'revisar'; chave: string; nome: string; regiao: string | null };
 
-type IdentidadeRua = Pick<PacoteCarga, 'rua' | 'rua_id' | 'rua_nome' | 'regiao'>;
+type IdentidadeRua = Pick<PacoteCarga, 'rua' | 'rua_id' | 'rua_nome' | 'regiao'> & {
+  caixa?: Pick<CaixaCarga, 'nome' | 'nomes_anteriores'> | null;
+};
+
+/**
+ * Caixa oficial do HUB → card: o que já existe com o nome da caixa (ou um nome antigo dela, ex.:
+ * "Rua Monsenhor Manuel Gomes" da caixa 6 "…Manoel…"); senão, o card nasce com o nome da caixa.
+ * A caixa foi decidida pelo Hugo no HUB — não é chute do texto — por isso o Street pode criar o card.
+ */
+function encaixarNaCaixa(caixa: Pick<CaixaCarga, 'nome' | 'nomes_anteriores'>, nome: string, cat: CatalogoRuas): Encaixe {
+  if (ehAreaManilha(caixa.nome)) {
+    const sub = resolverLogradouro(nome, cat.manilha);
+    if (sub.como !== 'desconhecido') return { tipo: 'manilha', sub: sub.nome };
+    // rua da Manilha fora das 14 sub-ruas do Street: a aba Manilha não mostraria → revisão (não some)
+    return { tipo: 'revisar', chave: idLogradouro(nome), nome, regiao: caixa.nome };
+  }
+  const nomes = [caixa.nome, ...caixa.nomes_anteriores].map((n) => chaveTexto(n));
+  const existente = [...cat.regioes, ...cat.ruas].find((c) => nomes.includes(chaveTexto(c)));
+  return existente ? { tipo: 'card', card: existente, por: 'caixa' } : { tipo: 'card', card: caixa.nome, por: 'caixa', criar: true };
+}
 
 /**
  * Decide o card do pacote, nesta ordem:
+ *  0. CAIXA oficial do HUB (V0.5): é o card — o Hugo já decidiu no HUB;
  *  1. decisão já tomada na revisão (apelido da rua ou da região);
  *  2. região do HUB que o Street tem como card de região (Manilha → sub-rua conhecida; Quinta → card Quinta);
  *  3. identidade da rua nos cards de rua (mesmo street_id; sem tipo só com UM candidato);
@@ -249,6 +283,7 @@ type IdentidadeRua = Pick<PacoteCarga, 'rua' | 'rua_id' | 'rua_nome' | 'regiao'>
 export function encaixarRua(p: IdentidadeRua, cat: CatalogoRuas): Encaixe {
   const nome = (p.rua_nome || p.rua).trim();
   const id = p.rua_id || idLogradouro(nome);
+  if (p.caixa) return encaixarNaCaixa(p.caixa, nome, cat);
   if (cat.apelidos[id]) return { tipo: 'card', card: cat.apelidos[id], por: 'apelido' };
   const regiao = p.regiao?.nome ?? null;
   if (regiao) {
@@ -299,6 +334,7 @@ export function ruasEmRevisao(lista: DeliveryData[]): RuaEmRevisao[] {
 }
 
 const identidadeGuardada = (d: DeliveryData): IdentidadeRua => ({
+  caixa: d.hub?.caixa ?? null,
   rua: d.endereco_rua || '',
   rua_id: d.hub?.rua_id,
   rua_nome: d.hub?.rua_nome,
@@ -330,15 +366,26 @@ function identidadeDoPacote(carga: DocumentoCarga, p: PacoteCarga): IdentidadeRu
     rua_id: item?.rua_id ?? p.rua_id,
     rua_nome: item?.rua_nome ?? p.rua_nome,
     regiao: p.regiao ?? (item?.regiao_nome ? { id: item.regiao_id ?? '', nome: item.regiao_nome, repasse_unico: false } : null),
+    caixa: p.caixa ?? item?.caixa ?? null,
   };
+}
+
+/** Pacote do aparelho ainda sem a identidade/caixa que a carga agora traz (carga antiga ou HUB antigo). */
+function faltaIdentidade(d: DeliveryData, ident: IdentidadeRua): boolean {
+  if (!d.hub) return false;
+  if (ident.rua_id && !d.hub.rua_id) return true;
+  return !!ident.caixa && !d.hub.caixa;
 }
 
 const semDesfecho = (d: DeliveryData) => !statusEntregue(d) && d.status !== 'insucesso';
 
 /** Pacotes da carga já no aparelho que ainda não foram encaixados pela identidade do HUB (cargas antigas). */
 export function semEncaixe(carga: DocumentoCarga, noAparelho: DeliveryData[]): number {
-  const comId = new Set(carga.pacotes.filter((p) => identidadeDoPacote(carga, p).rua_id).map((p) => p.hub_pacote_id));
-  return noAparelho.filter((d) => d.hub?.carga_id === carga.carga.id && comId.has(d.hub.pacote_id) && !d.hub.rua_id && semDesfecho(d)).length;
+  const identidade = new Map(carga.pacotes.map((p) => [p.hub_pacote_id, identidadeDoPacote(carga, p)]));
+  return noAparelho.filter((d) => {
+    const ident = d.hub?.carga_id === carga.carga.id ? identidade.get(d.hub.pacote_id) : undefined;
+    return !!ident && faltaIdentidade(d, ident) && semDesfecho(d);
+  }).length;
 }
 
 /**
@@ -362,6 +409,8 @@ export function receberCarga(
   jaNoAparelho: number;
   destinoPendente: number;
   revisar: RuaEmRevisao[];
+  /** Cards criados para caixas oficiais do HUB que o aparelho ainda não tinha (o Street avisa). */
+  cardsCriados: string[];
 } {
   const existentes = new Map(noAparelho.filter((d) => d.hub).map((d) => [d.hub!.pacote_id, d]));
   let memoria = mem;
@@ -370,13 +419,23 @@ export function receberCarga(
   const novos: DeliveryData[] = [];
   const atualizados: DeliveryData[] = [];
   const vistos = new Set<string>();
+  const cardsCriados = new Set<string>();
   const comIdentidade = (d: DeliveryData, p: PacoteCarga): DeliveryData => {
     const ident = identidadeDoPacote(carga, p);
-    if (!ident.rua_id && !ident.regiao) return d; // HUB antigo (sem identidade): regra antiga do Street
+    if (!ident.rua_id && !ident.regiao && !ident.caixa) return d; // HUB antigo (sem identidade): regra antiga do Street
+    const caixa = p.caixa ?? carga.itens?.find((i) => i.pacote_ids.includes(p.hub_pacote_id))?.caixa ?? null;
     const comHub: DeliveryData = d.hub
-      ? { ...d, hub: { ...d.hub, rua_id: ident.rua_id, rua_nome: ident.rua_nome, regiao_nome: ident.regiao?.nome ?? null } }
+      ? {
+          ...d,
+          hub: {
+            ...d.hub, rua_id: ident.rua_id, rua_nome: ident.rua_nome, regiao_nome: ident.regiao?.nome ?? null,
+            caixa: caixa ? { id: caixa.id, numero: caixa.numero, nome: caixa.nome, nomes_anteriores: caixa.nomes_anteriores } : null,
+          },
+        }
       : d;
-    return aplicarEncaixe(comHub, encaixarRua(ident, catalogo));
+    const e = encaixarRua(ident, catalogo);
+    if (e.tipo === 'card' && e.criar) cardsCriados.add(e.card);
+    return aplicarEncaixe(comHub, e);
   };
 
   for (const p of carga.pacotes) {
@@ -385,7 +444,7 @@ export function receberCarga(
     const ja = existentes.get(p.hub_pacote_id);
     if (ja) {
       jaNoAparelho++;
-      if (ja.hub && !ja.hub.rua_id && identidadeDoPacote(carga, p).rua_id && semDesfecho(ja)) atualizados.push(comIdentidade(ja, p));
+      if (faltaIdentidade(ja, identidadeDoPacote(carga, p)) && semDesfecho(ja)) atualizados.push(comIdentidade(ja, p));
       continue;
     }
     const base: DeliveryData = {
@@ -425,7 +484,11 @@ export function receberCarga(
       novos.push(comIdentidade(r.pacote, p));
     }
   }
-  return { memoria, novos, atualizados, jaNoAparelho, destinoPendente, revisar: ruasEmRevisao([...novos, ...atualizados]) };
+  return {
+    memoria, novos, atualizados, jaNoAparelho, destinoPendente,
+    revisar: ruasEmRevisao([...novos, ...atualizados]),
+    cardsCriados: [...cardsCriados],
+  };
 }
 
 // ---------------------------------------------------------------------------
