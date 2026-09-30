@@ -70,6 +70,8 @@ export interface DeliveryData {
   // FASE 1 - Operational V1 Fields
   palavra_chave?: string;
   motivo_insucesso?: string;
+  /** O texto que o ajudante copiou e colou para o cliente ao registrar a entrega/insucesso (vai junto para o HUB). */
+  texto_registro?: string;
   foto_insucesso?: string;
   data_reentrega?: string;
   historico_transferencia?: string[];

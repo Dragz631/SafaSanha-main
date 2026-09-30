@@ -244,6 +244,7 @@ export const GroupedDeliveryWhatsAppModal: React.FC<GroupedDeliveryWhatsAppModal
         {
           recebedor_tipo: (receiverType as ReceiverType) || 'portaria',
           recebedor_detalhes: computedReceiver,
+          texto: currentMessage,
         },
         jaEntregue ? d.data_hora_entrega || d.data_hora : agora
       );

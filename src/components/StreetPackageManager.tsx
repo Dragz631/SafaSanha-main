@@ -228,14 +228,20 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
   // Modal de Celebração de Rua Finalizada & Decisão de Insucessos
   const [isStreetCompletedModalOpen, setIsStreetCompletedModalOpen] = useState<boolean>(false);
   const prevPendingRef = useRef<number | null>(null);
+  const prevFeitosRef = useRef<number | null>(null);
   const completedStreetRef = useRef<string>('');
 
   useEffect(() => {
+    // Só é "rua finalizada" quando os pendentes zeraram porque alguém ENTREGOU (ou registrou insucesso).
+    // Pacote que some por troca de perfil ou repasse da rota para outro ajudante não é entrega.
+    const feitos = deliveredCount + insucessoCount;
     if (
       prevPendingRef.current !== null &&
       prevPendingRef.current > 0 &&
       pendingCount === 0 &&
       totalCount > 0 &&
+      prevFeitosRef.current !== null &&
+      feitos > prevFeitosRef.current &&
       completedStreetRef.current !== activeStreet
     ) {
       completedStreetRef.current = activeStreet;
@@ -246,10 +252,11 @@ export const StreetPackageManager: React.FC<StreetPackageManagerProps> = ({
     }
 
     prevPendingRef.current = pendingCount;
+    prevFeitosRef.current = feitos;
     if (pendingCount > 0) {
       completedStreetRef.current = '';
     }
-  }, [pendingCount, totalCount, activeStreet]);
+  }, [pendingCount, totalCount, deliveredCount, insucessoCount, activeStreet]);
 
   // Handler de Adição Relâmpago (1 Toque / Enter)
   const handleQuickAdd = (e: React.FormEvent) => {

@@ -48,9 +48,13 @@ import {
   lerGuardados,
   lerMemoriaSemPerfil,
   lerSaida,
+  lerSessaoConta,
+  gravarSessaoConta,
 } from './utils/hubStorage';
 import { ErroTransporte, gravarUrlHub, lerUrlHub, transporteHttp } from './utils/transporteHub';
-import { contarPacotes, ehAreaManilha, pacotesDaRua, ruasDosPacotes, statusEntregue } from './domain/ruas';
+import { type DadosNovaConta, type SessaoConta, classificarErroConta } from './domain/conta';
+import type { RetornoLogin } from './components/LoginHub';
+import { cardsDeCaixa, contarPacotes, ehAreaManilha, pacotesDaRua, rotasDoDia, ruasDosPacotes, statusEntregue } from './domain/ruas';
 import { dataLocal } from './domain/data';
 import { chaveTexto } from './domain/texto';
 import { gravarJSON, lerJSON, removerChave, useFalhasDeGravacao } from './utils/persistencia';
@@ -163,7 +167,25 @@ function Conteudo() {
   const [urlHub, setUrlHub] = useState<string>(lerUrlHub);
   const [perfisHub, setPerfisHub] = useState<AjudanteHub[] | null>(null);
   const [cargaOferecida, setCargaOferecida] = useState<{ doc: DocumentoCarga; novos: number; retirados: number } | null>(null);
-  const transporte = useMemo(() => transporteHttp(urlHub), [urlHub]);
+  // Faixa "Repasse do Hugo para João" (rota repassada na hora pelo HUB): fica até o ajudante dizer "Entendi".
+  const [repasseHub, setRepasseHub] = useState<{ chave: string; texto: string } | null>(null);
+  // Sem endereço do HUB (produção sem configurar) = sem transporte: o Street não faz nenhuma requisição ao HUB.
+  // Sessão de CONTA (login no HUB): o token só vale para o perfil dono dele; perfil sem conta não manda credencial.
+  const [sessaoConta, setSessaoConta] = useState<SessaoConta | null>(lerSessaoConta);
+  const tokenRef = useRef<string | null>(sessaoConta?.token ?? null);
+  const renovarRef = useRef<string | null>(sessaoConta?.renovar ?? null);
+  useEffect(() => {
+    gravarSessaoConta(sessaoConta);
+  }, [sessaoConta]);
+  const transporte = useMemo(() => (urlHub ? transporteHttp(urlHub, {
+        token: () => tokenRef.current,
+        renovar: () => renovarRef.current,
+        aoRenovar: (token, renovar) => {
+          tokenRef.current = token;
+          if (renovar) renovarRef.current = renovar;
+          setSessaoConta((s) => (s ? { ...s, token, renovar: renovar ?? s.renovar } : s));
+        },
+      }) : null), [urlHub]);
   // Conhecimento de ruas do aparelho decidido na revisão (rua/região do HUB → card existente).
   const [apelidosRua, setApelidosRua] = useState<Record<string, string>>(lerApelidosRua);
   const [cardsRegiao, setCardsRegiao] = useState<string[]>(lerCardsDeRegiao);
@@ -197,10 +219,16 @@ function Conteudo() {
   };
 
   const carregarPerfis = async () => {
+    if (!transporte) {
+      setPerfisHub(null);
+      return;
+    }
     try {
       setPerfisHub(await transporte.perfis());
     } catch (e) {
       setPerfisHub(null);
+      // HUB com login obrigatório (Vercel): a lista de perfis só existe depois de entrar — não é erro, não assusta.
+      if (e instanceof ErroTransporte && (e.status === 401 || e.status === 403)) return;
       setAvisoHub({ tipo: 'erro', texto: `${(e as Error).message}. Dá para usar o arquivo da carga.` });
     }
   };
@@ -237,9 +265,37 @@ function Conteudo() {
     return { lista: r.deliveries, memoria: m };
   };
 
+  /** O HUB repassou uma rota (saindo deste perfil ou chegando nele): avisa, uma vez por repasse. */
+  const avisarRepasse = (c: DocumentoCarga) => {
+    const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const para = c.carga.repassada_para;
+    const de = c.carga.repassada_de;
+    const info = para
+      ? {
+          chave: `${c.carga.id}:para:${para.em}`,
+          texto: `Repasse do ${c.ajudante.nome} para ${para.ajudante.nome} às ${hora(para.em)}: ${para.pacotes} pacote(s) saíram da sua rota${para.motivo ? ` (${para.motivo})` : ''}.`,
+        }
+      : de
+        ? {
+            chave: `${c.carga.id}:de:${de.em}`,
+            texto: `Repasse do ${de.ajudante.nome} para ${c.ajudante.nome} às ${hora(de.em)}: você assumiu ${de.pacotes} pacote(s) da rota ${de.carga_codigo}${de.motivo ? ` (${de.motivo})` : ''}.`,
+          }
+        : null;
+    if (!info) return;
+    if (lerJSON<string[]>('logiscan_street_repasses_vistos_v0', []).includes(info.chave)) return;
+    setRepasseHub((atual) => (atual?.chave === info.chave ? atual : info));
+  };
+  const dispensarRepasse = () => {
+    if (!repasseHub) return;
+    const vistos = lerJSON<string[]>('logiscan_street_repasses_vistos_v0', []);
+    gravarJSON('logiscan_street_repasses_vistos_v0', [...vistos, repasseHub.chave].slice(-50));
+    setRepasseHub(null);
+  };
+
   /** Aplica uma carga (vinda do HUB ou de arquivo) ao perfil ativo. */
   const aplicarCarga = (carga: DocumentoCarga, lista: DeliveryData[], origem: 'hub' | 'arquivo', base = memoria) => {
     const agora = new Date().toISOString();
+    avisarRepasse(carga);
     const r = receberCarga(base, carga, lista, agora, montarCatalogo());
     const ret = retiradosDaCarga(carga, lista);
     const trocados = new Map(r.atualizados.map((d) => [d.id_entrega, d]));
@@ -247,7 +303,20 @@ function Conteudo() {
       setSavedStreets((prev) => [...prev, ...r.cardsCriados.filter((c) => !prev.some((s) => chaveTexto(s) === chaveTexto(c)))]);
     }
     atualizar(() => r.memoria);
-    trocarLista([...r.novos, ...lista.filter((d) => !ret.remover.includes(d.id_entrega)).map((d) => trocados.get(d.id_entrega) ?? d)]);
+    const listaFinal = [...r.novos, ...lista.filter((d) => !ret.remover.includes(d.id_entrega)).map((d) => trocados.get(d.id_entrega) ?? d)];
+    trocarLista(listaFinal);
+    // Carga NOVA: as Rotas passam a ser só o que o ajudante recebeu (não as 8 ruas de sempre).
+    // Carga já conhecida (atualização): só acrescenta — o efeito das ruas dos pacotes cuida disso.
+    if (!lista.some((d) => d.hub?.carga_id === carga.carga.id)) {
+      const rotas = rotasDoDia(listaFinal);
+      if (rotas.length > 0) {
+        setSavedStreets(rotas);
+        if (!rotas.some((s) => chaveTexto(s) === chaveTexto(activeStreet))) setActiveStreet(rotas[0]);
+        try {
+          localStorage.setItem(DAILY_CONFIRMED_DATE_KEY, dataLocal());
+        } catch (_e) {}
+      }
+    }
     setCargaOferecida(null);
     const partes = [`${r.novos.length} pacote(s) novo(s)`];
     if (r.jaNoAparelho) partes.push(`${r.jaNoAparelho} já estavam no aparelho`);
@@ -269,7 +338,7 @@ function Conteudo() {
       texto: `${titulo}: ${partes.join(', ')}${ruasNovas.length ? ` · cards: ${ruasNovas.join(', ')}` : ''}.${aguardando}${revisar}`,
     });
     if (origem === 'hub') {
-      transporte.confirmarRecebimento(carga.carga.id, carga.ajudante.id, carga.pacotes.length).catch(() => undefined);
+      transporte?.confirmarRecebimento(carga.carga.id, carga.ajudante.id, carga.pacotes.length).catch(() => undefined);
     }
   };
 
@@ -287,7 +356,7 @@ function Conteudo() {
    * com aviso claro. `automatico` = chamada do sincronismo periódico: sem mensagens quando nada mudou.
    */
   const buscarCargaHub = async (perfil = ajudanteHub, lista = deliveries, automatico = false) => {
-    if (!perfil) return;
+    if (!perfil || !transporte) return;
     try {
       const [doc] = await transporte.cargasDoPerfil(perfil.id);
       if (!doc) {
@@ -304,6 +373,7 @@ function Conteudo() {
         setAvisoHub({ tipo: 'erro', texto: `O HUB devolveu a carga de ${v.carga.ajudante.nome} para o perfil de ${perfil.nome}: recusada.` });
         return;
       }
+      avisarRepasse(v.carga);
       const naTela = new Set(lista.map((d) => d.hub?.pacote_id).filter(Boolean));
       const novos = v.carga.pacotes.filter((p) => !naTela.has(p.hub_pacote_id)).length;
       const retirados = retiradosDaCarga(v.carga, lista).remover.length;
@@ -316,18 +386,98 @@ function Conteudo() {
       // É a carga DESTE perfil: entra direto, com aviso claro (carga de outro perfil nunca chega aqui).
       aplicarCarga(v.carga, lista, 'hub');
     } catch (e) {
+      if (e instanceof ErroTransporte && e.status === 401 && sessaoConta) {
+        handleEncerrarSessao({ expirada: true });
+        return;
+      }
       if (!automatico) {
         setAvisoHub({ tipo: 'erro', texto: e instanceof ErroTransporte ? `${e.message}. Use o arquivo da carga.` : (e as Error).message });
       }
     }
   };
 
+  /** Entrar com usuário + PIN. O PIN só passa por aqui: nada dele é guardado. */
+  const handleEntrar = async (usuario: string, pin: string): Promise<RetornoLogin> => {
+    if (!transporte) return { tipo: 'erro', texto: 'Informe o endereço do HUB primeiro.' };
+    try {
+      const r = await transporte.login(usuario, pin);
+      if (!r.perfil.id) {
+        return { tipo: 'erro', texto: 'Esta conta é só de administração e não tem perfil de ajudante para entregar. Peça para ligar um ajudante a ela no HUB.' };
+      }
+      const perfil: AjudanteHub = { id: r.perfil.id, nome: r.perfil.nome };
+      tokenRef.current = r.token;
+      renovarRef.current = r.renovar ?? null;
+      const aberta = abrirSessao(perfil, deliveries);
+      if (!aberta) {
+        tokenRef.current = null;
+        renovarRef.current = null;
+        return { tipo: 'erro', texto: 'Há pacotes de outro ajudante na tela. Encerre a sessão dele antes de entrar.' };
+      }
+      setSessaoConta({ token: r.token, renovar: r.renovar, perfilId: perfil.id, papel: r.perfil.papel });
+      trocarLista(aberta.lista);
+      setAvisoHub({ tipo: 'ok', texto: `Bem-vindo, ${perfil.nome}.` });
+      buscarCargaHub(perfil, aberta.lista);
+      return { tipo: 'ok', texto: `Bem-vindo, ${perfil.nome}.` };
+    } catch (e) {
+      if (e instanceof ErroTransporte && e.status === 0) return { tipo: 'erro', texto: `${e.message}. Confira se o HUB está ligado.` };
+      const c = e instanceof ErroTransporte ? classificarErroConta(e.status, e.corpo) : null;
+      return { tipo: 'erro', texto: c?.mensagem ?? (e as Error).message };
+    }
+  };
+
+  const handleCriarConta = async (dados: DadosNovaConta): Promise<RetornoLogin> => {
+    if (!transporte) return { tipo: 'erro', texto: 'Informe o endereço do HUB primeiro.' };
+    try {
+      await transporte.criarConta(dados);
+      return { tipo: 'ok', texto: 'Pedido enviado ao Hugo. Quando ele aprovar, entre com seu usuário e PIN.' };
+    } catch (e) {
+      if (e instanceof ErroTransporte && e.status === 0) return { tipo: 'erro', texto: `${e.message}. Confira se o HUB está ligado.` };
+      const c = e instanceof ErroTransporte ? classificarErroConta(e.status, e.corpo) : null;
+      return { tipo: 'erro', texto: c?.mensagem ?? (e as Error).message };
+    }
+  };
+
   // Sincronismo HUB → Street: com um perfil ativo, confere a carga dele a cada 15 s e ao voltar para o app.
   const buscarRef = useRef(buscarCargaHub);
   buscarRef.current = buscarCargaHub;
+
+  /**
+   * Envio AUTOMÁTICO da confirmação de entrega/insucesso ao HUB. Silencioso: se o HUB estiver fora,
+   * a fila continua no aparelho e tenta de novo no próximo ciclo (idempotente pelo id do evento).
+   * Só marca como enviado o que o HUB aceitou ou já tinha; recusado continua na fila e aparece no botão manual.
+   */
+  const enviandoAuto = useRef(false);
+  const enviarAutomaticoRef = useRef<() => Promise<void>>(async () => undefined);
+  enviarAutomaticoRef.current = async () => {
+    if (!transporte || !ajudanteHub || enviandoAuto.current) return;
+    const pendentes = saidaHub.filter((e) => !e.exportado_em);
+    if (pendentes.length === 0) return;
+    enviandoAuto.current = true;
+    try {
+      const agora = new Date().toISOString();
+      const doc = montarDocumentoEventos(pendentes, ajudanteHub, agora);
+      const r = await transporte.enviarEventos(doc);
+      const recusados = new Set(r.recusados.map((x) => x.codigo));
+      const ids = new Set(pendentes.filter((e) => !recusados.has(e.codigo)).map((e) => e.id_evento));
+      setSaidaHub((s) => marcarExportados(s, agora, ids));
+    } catch (e) {
+      // HUB fora do ar: fica na fila. Token recusado: a sessão expirou → volta ao login (nada é apagado).
+      if (e instanceof ErroTransporte && e.status === 401 && sessaoConta) handleEncerrarSessao({ expirada: true });
+    } finally {
+      enviandoAuto.current = false;
+    }
+  };
+  const pendentesDeEnvio = saidaHub.filter((e) => !e.exportado_em).length;
   useEffect(() => {
-    if (!ajudanteHub) return;
-    const tick = () => buscarRef.current(undefined, undefined, true);
+    if (pendentesDeEnvio > 0) enviarAutomaticoRef.current();
+  }, [pendentesDeEnvio, ajudanteHub, transporte]);
+
+  useEffect(() => {
+    if (!ajudanteHub || !transporte) return;
+    const tick = () => {
+      buscarRef.current(undefined, undefined, true);
+      enviarAutomaticoRef.current();
+    };
     const id = window.setInterval(tick, 15000);
     const aoVoltar = () => document.visibilityState === 'visible' && tick();
     document.addEventListener('visibilitychange', aoVoltar);
@@ -371,13 +521,15 @@ function Conteudo() {
     aplicarCarga(carga, deliveries, 'arquivo');
   };
 
-  const handleEncerrarSessao = () => {
+  /** `expirada` = o HUB recusou o token (401): sai sem perguntar, guardando tudo do perfil, e pede o login de novo. */
+  const handleEncerrarSessao = (opcoes?: { expirada?: boolean }) => {
     if (!ajudanteHub) return;
+    const expirada = opcoes?.expirada === true;
     const pendentes = saidaHub.filter((e) => !e.exportado_em).length;
     const aviso = pendentes
       ? `\n\n${pendentes} acontecimento(s) ainda não foram enviados ao HUB. Eles ficam guardados com ${ajudanteHub.nome} e voltam quando o perfil dele for ativado de novo.`
       : '';
-    if (!window.confirm(`Trocar de perfil? A carga, a fila e a memória de ${ajudanteHub.nome} ficam guardadas à parte.${aviso}`)) return;
+    if (!expirada && !window.confirm(`Trocar de perfil? A carga, a fila e a memória de ${ajudanteHub.nome} ficam guardadas à parte.${aviso}`)) return;
     const r = encerrarSessao(ajudanteHub, deliveries, saidaHub, guardadosHub, memoria);
     trocarLista(r.deliveries);
     setSaidaHub(r.saida);
@@ -385,7 +537,14 @@ function Conteudo() {
     const semPerfil = lerMemoriaSemPerfil() ?? memoriaVazia();
     atualizar(() => semPerfil);
     setCargaOferecida(null);
-    setAvisoHub({ tipo: 'ok', texto: `Perfil de ${ajudanteHub.nome} encerrado neste aparelho. Nada foi apagado.` });
+    setAvisoHub(
+      expirada
+        ? { tipo: 'erro', texto: `A sessão de ${ajudanteHub.nome} expirou. Entre de novo — nada foi apagado.` }
+        : { tipo: 'ok', texto: `Perfil de ${ajudanteHub.nome} encerrado neste aparelho. Nada foi apagado.` },
+    );
+    tokenRef.current = null;
+    renovarRef.current = null;
+    setSessaoConta(null);
     setAjudanteHub(null);
     carregarPerfis();
   };
@@ -403,10 +562,10 @@ function Conteudo() {
     if (!ajudanteHub || saidaHub.length === 0) return;
     const agora = new Date().toISOString();
     const doc = montarDocumentoEventos(saidaHub, ajudanteHub, agora);
-    if (modo === 'hub') {
+    if (modo === 'hub' && transporte) {
       try {
         const r = await transporte.enviarEventos(doc);
-        setSaidaHub((s) => marcarExportados(s, agora));
+        setSaidaHub((s) => marcarExportados(s, agora, new Set(doc.eventos.map((e) => e.id_evento))));
         setAvisoHub({
           tipo: r.recusados.length ? 'erro' : 'ok',
           texto:
@@ -419,7 +578,7 @@ function Conteudo() {
       }
     }
     const nome = baixarArquivoEventos(doc, agora);
-    setSaidaHub((s) => marcarExportados(s, agora));
+    setSaidaHub((s) => marcarExportados(s, agora, new Set(doc.eventos.map((e) => e.id_evento))));
     setAvisoHub({ tipo: 'ok', texto: `${nome} gerado com ${doc.eventos.length} acontecimento(s). Leve este arquivo ao HUB.` });
   };
 
@@ -578,6 +737,9 @@ function Conteudo() {
           urlHub={urlHub}
           cargaOferecida={cargaOferecida}
           onEscolherPerfil={handleEscolherPerfil}
+          onEntrar={handleEntrar}
+          onCriarConta={handleCriarConta}
+          papel={sessaoConta && ajudanteHub?.id === sessaoConta.perfilId ? sessaoConta.papel : null}
           onBuscarCarga={() => buscarCargaHub()}
           onAceitarCarga={() => cargaOferecida && ajudanteHub && aplicarCarga(cargaOferecida.doc, deliveries, 'hub')}
           onCarregarArquivo={handleCarregarArquivo}
@@ -585,6 +747,8 @@ function Conteudo() {
           onEncerrarSessao={handleEncerrarSessao}
           onRecarregarPerfis={carregarPerfis}
           onMudarUrlHub={handleUrlHub}
+          repasse={repasseHub}
+          onDispensarRepasse={dispensarRepasse}
           revisaoRuas={revisaoRuas}
           cardsParaEncaixe={cardsParaEncaixe}
           onEncaixarRua={handleEncaixarRua}
@@ -649,6 +813,7 @@ function Conteudo() {
         isOpen={isDailyStreetPickerOpen}
         savedStreets={savedStreets}
         deliveries={deliveries}
+        cardsDeCaixa={cardsDeCaixa(deliveries)}
         onClose={() => setIsDailyStreetPickerOpen(false)}
         onConfirmStreets={handleConfirmDailyStreets}
         onOpenAssociacaoTab={() => setActiveTab('associacao')}

@@ -20,6 +20,8 @@ interface DailyStreetPickerModalProps {
   isOpen: boolean;
   savedStreets: string[];
   deliveries: DeliveryData[];
+  /** Cards que nasceram de caixas do HUB: aparecem na grade, como os demais. */
+  cardsDeCaixa?: string[];
   onClose: () => void;
   onConfirmStreets: (selectedStreets: string[]) => void;
   onOpenAssociacaoTab?: () => void;
@@ -29,6 +31,7 @@ export const DailyStreetPickerModal: React.FC<DailyStreetPickerModalProps> = ({
   isOpen,
   savedStreets,
   deliveries,
+  cardsDeCaixa = [],
   onClose,
   onConfirmStreets,
   onOpenAssociacaoTab,
@@ -58,19 +61,27 @@ export const DailyStreetPickerModal: React.FC<DailyStreetPickerModalProps> = ({
   }, [isOpen, savedStreets]);
 
   // Contagem de pacotes para cada rua/setor nas entregas carregadas
+  // Grade: os 9 cards fixos + os cards das caixas do HUB (mesmo visual).
+  const cards = useMemo<DailyStreetCardItem[]>(
+    () => [
+      ...DAILY_STREET_CARDS,
+      ...cardsDeCaixa.map((nome) => ({ id: `caixa_${nome}`, streetName: nome, label: nome.toLowerCase(), type: 'street' as const })),
+    ],
+    [cardsDeCaixa],
+  );
   const packageCountByStreet = useMemo(() => {
     const counts = new Map<string, number>();
-    DAILY_STREET_CARDS.forEach((card) => {
+    cards.forEach((card) => {
       counts.set(card.streetName.toLowerCase(), pacotesDaRua(deliveries, card.streetName).length);
     });
     return counts;
-  }, [deliveries]);
+  }, [deliveries, cards]);
 
   // Ruas customizadas adicionais que o entregador possa ter em savedStreets fora dos 9 cards padrão
   const extraCustomStreets = useMemo(() => {
-    const defaultLower = new Set(DAILY_STREET_CARDS.map((c) => c.streetName.toLowerCase()));
+    const defaultLower = new Set(cards.map((c) => c.streetName.toLowerCase()));
     return savedStreets.filter((s) => !defaultLower.has(s.trim().toLowerCase()));
-  }, [savedStreets]);
+  }, [savedStreets, cards]);
 
   if (!isOpen) return null;
 
@@ -96,7 +107,7 @@ export const DailyStreetPickerModal: React.FC<DailyStreetPickerModalProps> = ({
       if ('vibrate' in navigator) navigator.vibrate(30);
     } catch (_e) {}
     const next = new Set<string>();
-    DAILY_STREET_CARDS.forEach((c) => next.add(c.streetName.toLowerCase()));
+    cards.forEach((c) => next.add(c.streetName.toLowerCase()));
     extraCustomStreets.forEach((s) => next.add(s.toLowerCase()));
     setSelectedSet(next);
   };
@@ -132,7 +143,7 @@ export const DailyStreetPickerModal: React.FC<DailyStreetPickerModalProps> = ({
     // Monta a lista final preservando a grafia formal dos cards ou o nome original customizado
     const finalList: string[] = [];
 
-    DAILY_STREET_CARDS.forEach((card) => {
+    cards.forEach((card) => {
       if (selectedSet.has(card.streetName.toLowerCase())) {
         finalList.push(card.streetName);
       }
@@ -140,7 +151,7 @@ export const DailyStreetPickerModal: React.FC<DailyStreetPickerModalProps> = ({
 
     // Adiciona extras selecionados
     selectedSet.forEach((selectedLower) => {
-      if (!DAILY_STREET_CARDS.some((c) => c.streetName.toLowerCase() === selectedLower)) {
+      if (!cards.some((c) => c.streetName.toLowerCase() === selectedLower)) {
         // Encontra a capitalização original se existia
         const found = extraCustomStreets.find((s) => s.toLowerCase() === selectedLower);
         finalList.push(found || selectedLower);
@@ -207,7 +218,7 @@ export const DailyStreetPickerModal: React.FC<DailyStreetPickerModalProps> = ({
             </div>
 
             <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-200/60 dark:border-emerald-900/50">
-              {countSelected} de {DAILY_STREET_CARDS.length + extraCustomStreets.length}
+              {countSelected} de {cards.length + extraCustomStreets.length}
             </span>
           </div>
         </div>
@@ -215,7 +226,7 @@ export const DailyStreetPickerModal: React.FC<DailyStreetPickerModalProps> = ({
         {/* GRADE 3X3 DE CARDS COM ALTA USABILIDADE */}
         <div className="p-3.5 sm:p-5 overflow-y-auto space-y-4 flex-1 overscroll-contain">
           <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
-            {DAILY_STREET_CARDS.map((card) => {
+            {cards.map((card) => {
               const isSelected = selectedSet.has(card.streetName.toLowerCase());
               const count = packageCountByStreet.get(card.streetName.toLowerCase()) || 0;
 

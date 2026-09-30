@@ -228,3 +228,33 @@ describe('V0.5: a CAIXA oficial do HUB é o card do Street', () => {
     expect(r.cardsCriados).toEqual(['Vila Militar']);
   });
 });
+
+describe('catálogo completo de caixas do HUB (V0.5)', () => {
+  const cx = (numero: string, nome: string, nomes_anteriores: string[] = []) => ({ id: `cx-${numero}`, numero, nome, pai: null, nomes_anteriores });
+  const CAIXAS_EXTRAS = [
+    cx('1.2', 'Rua Peter Lund'),
+    cx('7', 'Vila Militar'),
+    cx('10', 'Associações'),
+    cx('10.1', 'Associação da Chatuba'),
+    cx('10.2', 'Associação São Sebastião'),
+    cx('10.3', 'Associação da Cremente'),
+    cx('10.4', 'Associação do Parque Alegria'),
+    cx('11', 'Fora & Diversos', ['Diversos']),
+  ];
+
+  it('cada caixa que o Street não tem vira UM card (sem duplicar) e o pacote fica nele', () => {
+    const r = receber(carga([...CAIXAS_EXTRAS, ...CAIXAS_EXTRAS].map((c) => pac('Rua Qualquer', null, { caixa: c }))));
+    expect(r.cardsCriados.sort()).toEqual(CAIXAS_EXTRAS.map((c) => c.nome).sort());
+    expect(r.revisar).toEqual([]);
+    for (const c of CAIXAS_EXTRAS) expect(pacotesDaRua(r.novos, c.nome)).toHaveLength(2);
+  });
+
+  it('card antigo com o nome anterior da caixa é reaproveitado (Diversos → Fora & Diversos)', () => {
+    const r = receber(
+      carga([pac('Avenida Brasil', null, { caixa: cx('11', 'Fora & Diversos', ['Diversos']) })]),
+      { ...CATALOGO, regioes: [...CATALOGO.regioes, 'Diversos'] },
+    );
+    expect(r.cardsCriados).toEqual([]);
+    expect(r.novos[0].rua_operacional).toBe('Diversos');
+  });
+});

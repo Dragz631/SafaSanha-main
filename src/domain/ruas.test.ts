@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { contarPacotes, ehAreaManilha, pacotesDaRua, pacotesSemRua, pertenceARua, ruasDosPacotes } from './ruas';
+import { cardsDeCaixa, contarPacotes, ehAreaManilha, pacotesDaRua, pacotesSemRua, pertenceARua, rotasDoDia, ruasDosPacotes } from './ruas';
+import type { DeliveryData } from '../types';
 import { pacote } from './fixtures';
 
 describe('pacotes da rua — fonte única, sem substring', () => {
@@ -53,5 +54,18 @@ describe('contarPacotes', () => {
   it('total = entregues + insucessos + pendentes', () => {
     const l = [pacote({ status: 'entregue' }), pacote({ status: 'concluido' }), pacote({ status: 'insucesso' }), pacote({})];
     expect(contarPacotes(l)).toEqual({ total: 4, entregues: 2, insucessos: 1, pendentes: 1 });
+  });
+});
+
+describe('rotas do dia (cards que o ajudante realmente tem)', () => {
+  const hubPac = (extra: Partial<DeliveryData>): DeliveryData => ({ ...pacote({ rua: 'Rua X' }), hub: { pacote_id: 'p', transportadora: 'jt', carga_id: 'c', carga_codigo: 'C', ajudante_id: 'a' }, ...extra });
+  it('só as ruas/caixas com pacote, na ordem dos cards fixos; caixa nova vai depois', () => {
+    const lista = [
+      hubPac({ rua_operacional: 'Vila Militar', hub: { pacote_id: 'p1', transportadora: 'jt', carga_id: 'c', carga_codigo: 'C', ajudante_id: 'a', caixa: { id: 'cx7', numero: '7', nome: 'Vila Militar', nomes_anteriores: [] } } }),
+      hubPac({ rua_operacional: 'Rua General Gurjão' }),
+      hubPac({ rua_operacional: 'Rua Carlos Seidl' }),
+    ];
+    expect(rotasDoDia(lista)).toEqual(['Rua Carlos Seidl', 'Rua General Gurjão', 'Vila Militar']);
+    expect(cardsDeCaixa(lista)).toEqual(['Vila Militar']);
   });
 });

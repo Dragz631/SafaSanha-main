@@ -383,10 +383,11 @@ export const DeliveryWhatsAppModal: React.FC<DeliveryWhatsAppModalProps> = ({
             {
               recebedor_tipo: (receiverType as ReceiverType) || 'proprio_morador',
               recebedor_detalhes: computedReceiver,
+              texto: currentMessage,
             },
             quando
           )
-        : aplicarInsucesso(base, computedReason, agora);
+        : aplicarInsucesso(base, computedReason, agora, currentMessage);
 
     if (onConfirmDelivery) onConfirmDelivery(updated);
     else if (onSaveDelivery) onSaveDelivery(updated);

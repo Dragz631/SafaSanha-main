@@ -5,7 +5,7 @@
  * Aqui a comparação é por igualdade da chave normalizada — nunca por substring.
  */
 import type { DeliveryData } from '../types';
-import { getManilhaSubStreet, isManilhaDelivery } from '../data/cajuStreets';
+import { DAILY_STREET_CARDS, getManilhaSubStreet, isManilhaDelivery } from '../data/cajuStreets';
 import { chaveTexto, limparEspacos } from './texto';
 
 export function statusEntregue(d: Pick<DeliveryData, 'status'>): boolean {
@@ -62,6 +62,32 @@ export function pacotesSemRua(lista: DeliveryData[]): DeliveryData[] {
 /** Pacotes do HUB cuja rua o Street não reconheceu (aguardando revisão). */
 export function pacotesEmRevisaoDeRua(lista: DeliveryData[]): DeliveryData[] {
   return lista.filter((d) => !!d.hub?.revisar_rua);
+}
+
+/**
+ * ROTAS DO DIA: os cards que o ajudante realmente tem (ruas/caixas com pacote + Manilha, se houver).
+ * Ordem: primeiro os cards fixos do Street (na ordem deles), depois os demais (ex.: caixas novas do HUB).
+ */
+export function rotasDoDia(lista: DeliveryData[]): string[] {
+  const nomes = ruasDosPacotes(lista);
+  if (lista.some((d) => !d.hub?.revisar_rua && !d.rua_operacional && isManilhaDelivery(d))) nomes.push('Manilha');
+  const posicao = (n: string) => {
+    const i = DAILY_STREET_CARDS.findIndex((c) => chaveTexto(c.streetName) === chaveTexto(n));
+    return i < 0 ? DAILY_STREET_CARDS.length : i;
+  };
+  return nomes.sort((a, b) => posicao(a) - posicao(b) || a.localeCompare(b, 'pt-BR'));
+}
+
+/** Cards que nasceram de CAIXAS do HUB e não são um dos cards fixos do Street (aparecem na grade do seletor). */
+export function cardsDeCaixa(lista: DeliveryData[]): string[] {
+  const fixos = new Set(DAILY_STREET_CARDS.map((c) => chaveTexto(c.streetName)));
+  const mapa = new Map<string, string>();
+  for (const d of lista) {
+    if (!d.hub?.caixa || !d.rua_operacional || d.hub.revisar_rua) continue;
+    const k = chaveTexto(d.rua_operacional);
+    if (!fixos.has(k) && !mapa.has(k)) mapa.set(k, d.rua_operacional);
+  }
+  return Array.from(mapa.values());
 }
 
 /** Ruas presentes nos pacotes (exceto Manilha), sem duplicar por caixa/acento. */

@@ -13,6 +13,8 @@ export interface DadosEntrega {
   nome_destinatario?: string;
   foto_pacote_path?: string;
   foto_local_path?: string;
+  /** O texto que o ajudante copiou e colou para o cliente (vai para o HUB junto com a baixa). */
+  texto?: string;
 }
 
 export function aplicarEntrega(d: DeliveryData, dados: DadosEntrega, agora: string): DeliveryData {
@@ -25,17 +27,19 @@ export function aplicarEntrega(d: DeliveryData, dados: DadosEntrega, agora: stri
     foto_pacote_path: dados.foto_pacote_path || d.foto_pacote_path || '',
     foto_local_path: dados.foto_local_path || d.foto_local_path || '',
     motivo_insucesso: undefined,
+    texto_registro: dados.texto ?? d.texto_registro,
     data_hora_entrada: d.data_hora_entrada ?? d.data_hora,
     data_hora: agora,
     data_hora_entrega: agora,
   };
 }
 
-export function aplicarInsucesso(d: DeliveryData, motivo: string, agora: string): DeliveryData {
+export function aplicarInsucesso(d: DeliveryData, motivo: string, agora: string, texto?: string): DeliveryData {
   return {
     ...d,
     status: 'insucesso',
     motivo_insucesso: motivo,
+    texto_registro: texto ?? d.texto_registro,
     data_hora_entrada: d.data_hora_entrada ?? d.data_hora,
     data_hora: agora,
     data_hora_entrega: undefined,

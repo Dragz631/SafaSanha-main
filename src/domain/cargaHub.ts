@@ -69,6 +69,15 @@ export interface ItemCarga {
   pacote_ids: string[];
 }
 
+/** Repasse na hora entre ajudantes, como o HUB avisa no documento da carga. */
+export interface RepasseHub {
+  carga_codigo: string;
+  ajudante: AjudanteHub;
+  em: string;
+  motivo: string;
+  pacotes: number;
+}
+
 export interface DocumentoCarga {
   schema: typeof SCHEMA_CARGA;
   gerado_em: string;
@@ -80,6 +89,10 @@ export interface DocumentoCarga {
     /** Opcional: MONTADA = ainda no galpão (rota não iniciada no HUB); EM_ROTA = rota iniciada. */
     situacao?: 'MONTADA' | 'EM_ROTA';
     rota_iniciada_em?: string | null;
+    /** Repasse na hora: esta carga nasceu da rota de outro ajudante ("Repasse do Hugo para João"). */
+    repassada_de?: RepasseHub | null;
+    /** Repasse na hora: parte desta rota passou para outro ajudante (esses pacotes saem da tela). */
+    repassada_para?: RepasseHub | null;
   };
   ajudante: AjudanteHub;
   pacotes: PacoteCarga[];
@@ -96,6 +109,8 @@ export interface EventoStreet {
   recebedor: { tipo: string; detalhes: string } | null;
   /** Só INSUCESSO_REGISTRADO. */
   motivo?: string;
+  /** O texto que o ajudante copiou e colou para o cliente (entrega ou insucesso). Só texto; fotos vêm depois. */
+  texto?: string;
 }
 
 export interface DocumentoEventos {
@@ -520,6 +535,7 @@ export function detectarEventos(antes: DeliveryData[], depois: DeliveryData[], s
         tipo: 'ENTREGA_REGISTRADA',
         ocorrido_em: quando,
         recebedor: d.recebedor_tipo || d.recebedor_detalhes ? { tipo: d.recebedor_tipo || '', detalhes: d.recebedor_detalhes || '' } : null,
+        ...(d.texto_registro ? { texto: d.texto_registro } : {}),
       });
     } else if (d.status === 'insucesso' && a.status !== 'insucesso') {
       eventos.push({
@@ -529,6 +545,7 @@ export function detectarEventos(antes: DeliveryData[], depois: DeliveryData[], s
         ocorrido_em: d.data_hora,
         recebedor: null,
         motivo: d.motivo_insucesso || 'sem motivo informado',
+        ...(d.texto_registro ? { texto: d.texto_registro } : {}),
       });
     }
   }
@@ -560,6 +577,7 @@ export function montarDocumentoEventos(saida: ItemSaida[], ajudante: AjudanteHub
   };
 }
 
-export function marcarExportados(saida: ItemSaida[], agora: string): ItemSaida[] {
-  return saida.map((e) => (e.exportado_em ? e : { ...e, exportado_em: agora }));
+/** Marca como enviados os eventos da fila (só os `ids`, se informados: o que nasceu durante o envio continua pendente). */
+export function marcarExportados(saida: ItemSaida[], agora: string, ids?: Set<string>): ItemSaida[] {
+  return saida.map((e) => (e.exportado_em || (ids && !ids.has(e.id_evento)) ? e : { ...e, exportado_em: agora }));
 }

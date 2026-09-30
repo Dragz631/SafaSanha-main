@@ -4,6 +4,7 @@
  * (Sincronização real, com fila controlada e confirmação do HUB, vem depois.)
  */
 import type { AjudanteHub, Guardados, ItemSaida } from '../domain/cargaHub';
+import { PAPEIS_CONTA, type SessaoConta } from '../domain/conta';
 import type { MemoriaOperacional } from '../domain/memoria';
 import { gravarJSON, lerJSON } from './persistencia';
 
@@ -48,3 +49,13 @@ export const lerCardsDeRegiao = () => {
   return Array.isArray(r) ? (r as string[]) : [];
 };
 export const gravarCardsDeRegiao = (r: string[]) => gravarJSON(CHAVE_REGIOES, r);
+
+/** Sessão de conta (token devolvido pelo login). Nunca guarda o PIN. */
+const CHAVE_SESSAO_CONTA = 'logiscan_street_sessao_conta_v0';
+export const lerSessaoConta = (): SessaoConta | null => {
+  const s = lerJSON<Partial<SessaoConta> | null>(CHAVE_SESSAO_CONTA, null);
+  return s && typeof s.token === 'string' && typeof s.perfilId === 'string' && PAPEIS_CONTA.includes(s.papel as never)
+    ? { token: s.token, renovar: typeof s.renovar === 'string' ? s.renovar : undefined, perfilId: s.perfilId, papel: s.papel as SessaoConta['papel'] }
+    : null;
+};
+export const gravarSessaoConta = (s: SessaoConta | null) => gravarJSON(CHAVE_SESSAO_CONTA, s);
