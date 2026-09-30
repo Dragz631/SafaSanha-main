@@ -522,14 +522,15 @@ function Conteudo() {
   };
 
   /** `expirada` = o HUB recusou o token (401): sai sem perguntar, guardando tudo do perfil, e pede o login de novo. */
-  const handleEncerrarSessao = (opcoes?: { expirada?: boolean }) => {
+  const handleEncerrarSessao = (opcoes?: { expirada?: boolean; confirmado?: boolean }) => {
     if (!ajudanteHub) return;
     const expirada = opcoes?.expirada === true;
     const pendentes = saidaHub.filter((e) => !e.exportado_em).length;
     const aviso = pendentes
       ? `\n\n${pendentes} acontecimento(s) ainda não foram enviados ao HUB. Eles ficam guardados com ${ajudanteHub.nome} e voltam quando o perfil dele for ativado de novo.`
       : '';
-    if (!expirada && !window.confirm(`Trocar de perfil? A carga, a fila e a memória de ${ajudanteHub.nome} ficam guardadas à parte.${aviso}`)) return;
+    // A confirmação é feita no painel (botão "Sim, trocar"): window.confirm pode ser bloqueado pelo navegador.
+    if (!expirada && opcoes?.confirmado !== true && !window.confirm(`Trocar de perfil? A carga, a fila e a memória de ${ajudanteHub.nome} ficam guardadas à parte.${aviso}`)) return;
     const r = encerrarSessao(ajudanteHub, deliveries, saidaHub, guardadosHub, memoria);
     trocarLista(r.deliveries);
     setSaidaHub(r.saida);

@@ -34,7 +34,7 @@ interface Props {
   onAceitarCarga: () => void;
   onCarregarArquivo: (arquivo: File) => void;
   onEnviarAoHub: (modo?: 'hub' | 'arquivo') => void;
-  onEncerrarSessao: () => void;
+  onEncerrarSessao: (opcoes?: { confirmado?: boolean }) => void;
   onRecarregarPerfis: () => void;
   onMudarUrlHub: (url: string) => void;
   /** Ruas/regiões da carga que o Street não reconheceu (NOVA RUA / CONHECIMENTO NÃO RECONHECIDO). */
@@ -88,6 +88,7 @@ export const PainelHub: React.FC<Props> = (p) => {
   const [editandoUrl, setEditandoUrl] = useState(false);
   const [url, setUrl] = useState(p.urlHub);
   const [semConta, setSemConta] = useState(false);
+  const [confirmandoTroca, setConfirmandoTroca] = useState(false);
   const { ajudante } = p;
   const daCarga = ajudante ? p.deliveries.filter((d) => d.hub?.ajudante_id === ajudante.id) : [];
   const cargas = Array.from(new Set(daCarga.map((d) => d.hub!.carga_codigo)));
@@ -221,9 +222,34 @@ export const PainelHub: React.FC<Props> = (p) => {
           >
             <Download className="w-3.5 h-3.5" /> <FileJson className="w-3.5 h-3.5" />
           </button>
-          <button type="button" onClick={p.onEncerrarSessao} title="Trocar de perfil (nada é apagado)" className={`${botao} ml-auto border border-slate-600 text-slate-300`}>
+          <button type="button" onClick={() => setConfirmandoTroca(true)} title="Trocar de perfil (nada é apagado)" className={`${botao} ml-auto border border-slate-600 text-slate-300`}>
             <LogOut className="w-3.5 h-3.5" /> Trocar perfil
           </button>
+        </div>
+      )}
+
+      {ajudante && confirmandoTroca && (
+        <div className="mt-2 rounded-xl border border-slate-600 bg-slate-900/60 p-2.5" role="alertdialog" aria-label="Confirmar troca de perfil">
+          <div className="font-black text-white">Trocar de perfil?</div>
+          <div className="text-slate-300">
+            A carga, a fila e a memória de {ajudante.nome} ficam guardadas à parte. Nada é apagado.
+            {aEnviar > 0 && ` ${aEnviar} acontecimento(s) ainda não foram enviados ao HUB e voltam quando ${ajudante.nome} entrar de novo.`}
+          </div>
+          <div className="mt-1.5 flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmandoTroca(false);
+                p.onEncerrarSessao({ confirmado: true });
+              }}
+              className={`${botao} bg-amber-400 text-slate-950`}
+            >
+              Sim, trocar
+            </button>
+            <button type="button" onClick={() => setConfirmandoTroca(false)} className={`${botao} border border-slate-600 text-slate-300`}>
+              Cancelar
+            </button>
+          </div>
         </div>
       )}
 
